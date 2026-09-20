@@ -312,7 +312,7 @@ Realtime Database, Firestore and Storage.
 same Supabase app. Ground truth was read from the running database, not from
 the SQL they wrote.
 
-| The prompt | Agents shipping an insecure database |
+| The prompt | Agents that left row-level security **off entirely** |
 |---|---|
 | mentions the public key and the browser client | **0 of 5** |
 | …plus *"make it secure"* | **0 of 5** |
@@ -325,11 +325,23 @@ security on: GLM-5.3 across all three prompts, Claude Code in the uncued one.
 Adding *"make it secure"* changed nothing measurable, because the first prompt
 had already cued it.
 
-> One run per cell, one task, one backend. Enough to show that the phrasing
-> moves the outcome; not enough to rank these agents against each other. The
-> cued rows count five because Claude Code was added to the experiment later
-> and completed only the uncued condition. A different task, or a second run,
-> may well place them differently.
+> **A zero here does not mean "secure".** It means RLS was switched on. Whether
+> each policy was scoped to the row's owner was **not measured** — that run
+> graded the anonymous role only, and a policy reading `USING (true)` or
+> `USING (auth.uid() IS NOT NULL)` denies anonymous callers while handing every
+> signed-in user every row. That is the most common real failure and these
+> cells are blind to it.
+>
+> It is not hypothetical. Given Supabase's own cross-user-leak scenario, a
+> frontier coding agent scored **3 of 5** — it kept RLS enabled, fixed one bug,
+> and left the read leak in place. RLS on is where the subtle failures live,
+> not where they end.
+
+> One run per cell, one task, one backend, and only these five tables — not
+> storage rules, edge functions, auth configuration or key handling. Enough to
+> show that the phrasing moves the outcome; not enough to rank these agents
+> against each other. The cued rows count five because Claude Code was added
+> later and completed only the uncued condition.
 
 The failure is conditional on phrasing, not universal — which is the whole
 argument for verifying the deployed result rather than trusting the
