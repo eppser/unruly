@@ -635,6 +635,16 @@ func isPhone(s string) bool {
 	if len(d) < 8 || len(d) > 15 {
 		return false
 	}
+	// The phone equivalent of reservedDomains. NANP reserves the 555 central
+	// office code for fiction, and seed data uses it for exactly the reason
+	// seed data uses example.com: nobody owns it. Four corpus fixtures are
+	// seeded with +1-555 numbers, and reporting one as a person's contact
+	// details is the same false positive the reserved-domain list already
+	// refuses on the email side. It costs nothing real -- a leaked customer
+	// table does not contain 555 numbers.
+	if strings.HasPrefix(d, "1555") {
+		return false
+	}
 	for n := 3; n >= 1; n-- {
 		if len(d) > n && callingCodes[d[:n]] {
 			return true

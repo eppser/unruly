@@ -86,6 +86,16 @@ func TestPhoneNumbersAreRecoveredOnlyInE164Form(t *testing.T) {
 		{"+442071838750", true},
 		{"+1 (415) 555-2671", true},
 		{"+49 30 901820", true},
+
+		// Placeholder ranges, refused for the same reason reserved email
+		// domains are: seed and demo data use them precisely because nobody
+		// owns them, and reporting one as a person's contact details is the
+		// false positive this package exists to avoid. Four corpus fixtures
+		// seed +1-555 numbers; the corpus does not grade classes on any of
+		// them, so this would never have shown up as a measured false alarm.
+		{"+1-555-0101", false},
+		{"+1 555 0199", false},
+		{"+1-555-4321", false},
 		{"5511987654321", false}, // no plus: could be anything
 		{"+999123456789", false}, // not an assigned calling code
 		{"+1", false},            // too short to be a number
