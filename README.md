@@ -1,62 +1,216 @@
+<div align="center">
+
 # unruly
 
-**Point it at a URL. It tells you what a stranger can read out of your database — and proves it with the rows.**
+**Find out what a stranger can read out of your database — before they do.**
 
-```bash
-unruly -u https://your-app.com
-```
+Point it at a URL. No credentials, no dashboard access, no agent to install.
+It finds the public key your app already ships to every browser, then proves
+what that key reaches — with the rows.
 
-No credentials. No dashboard access. No agent to install. unruly finds the
-public key your app already ships to every browser, then asks your backend the
-only question that matters: *what does this hand to someone who isn't logged
-in?*
+[![CI](https://github.com/eppser/unruly/actions/workflows/ci.yml/badge.svg)](https://github.com/eppser/unruly/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Precision](https://img.shields.io/badge/precision-100%25-brightgreen)](#accuracy-measured-not-asserted)
+[![Backends](https://img.shields.io/badge/backends-Supabase%20%C2%B7%20Firebase%20%C2%B7%20Neon%20%C2%B7%20PocketBase-6366f1)](#supported-backends)
 
-```
-[supabase-anon-read-exposed] [postgrest] [critical] https://your-app.com/rest/v1/user_credentials [6 rows]
-  └─ proof {"api_key":"sk_live_4f8a2b1c9d0e7f6a5b4c3d2e","email":"dana@example.invalid",
-            "password_hash":"$2b$12$K8h5vQZ...","totp_secret":"JBSWY3DPEHPK3PXP"}
-[supabase-anon-read-exposed] [postgrest] [critical] https://your-app.com/rest/v1/payment_methods [4 rows]
-  └─ proof {"card_number":"4111111111111111","iban":"DE89370400440532013000",
-            "billing_email":"customer1@example.invalid","card_expiry":"11/29"}
-```
+<img src="docs/media/scan.gif" alt="unruly scanning an application and returning exposed rows as proof" width="100%">
 
-*(Real output against `benchmark/corpus/01-rls-off-crud`, a fixture with
-fabricated data. Reproduce: `make benchmark`.)*
-
-Every finding carries the rows that prove it and the `curl` line that retrieved
-them. If you can't reproduce a finding by pasting its command, it isn't a
-finding.
-
-**Supabase · Firebase · Neon · PocketBase.** 72 checks. One binary, no config.
+</div>
 
 ---
 
-## Why not just use the platform's security advisor?
+## The problem
 
-**Because the advisor is documented not to flag the most common real leak.**
+Your app ships a public API key to the browser. That is by design — Supabase,
+Firebase, Neon and PocketBase all work this way. The key is safe **only** if
+row-level security is on and the policies are right.
 
-Supabase's advisor is [`supabase/splinter`](https://github.com/supabase/splinter).
-Its `0024_rls_policy_always_true` lint checks only `UPDATE` and `DELETE`:
+When they aren't, your database is a public API. Card numbers, password hashes,
+API tokens, home addresses — one `curl` away, no login required.
+
+```diff
+- customers        25 rows   full_name, email, phone_number, address_line
+- payment_methods   4 rows   card_number, iban, card_expiry
+- user_credentials  6 rows   api_key, password_hash, totp_secret
+```
+
+You will not find this by reading your code. You find it by asking the
+deployed system.
+
+## Quickstart
+
+```bash
+go install github.com/eppser/unruly/cmd/unruly@latest
+
+unruly -u https://your-app.com
+```
+
+That's it. No config file, no API token, no project reference to look up.
+
+---
+
+## Features
+
+### 🎯 Proof, not warnings
+Every finding carries the rows that prove it and the exact `curl` that
+retrieved them. If you can't reproduce a finding by pasting its command, it
+isn't a finding. No "this policy looks risky" — either data came back or it
+didn't.
+
+### 🔍 Zero-config discovery
+Give it a URL. It reads the HTML, walks the JavaScript bundles, recovers the
+project reference and the public key, identifies the backend, and maps the
+schema — before it sends a single probe at your data.
+
+### ⚡ Parallel by default
+64 concurrent probes per scan, tuned to PostgREST's measured saturation point,
+under one shared rate limit and one request budget. `-c` and `-rl` are promises
+to the target that every stage honours, not per-package suggestions.
+
+### 🗃️ Four backends, one binary
+Supabase, Firebase, Neon and PocketBase — plus six application-layer checks
+that work regardless of what's behind them. Agencies don't get to pick the
+client's stack.
+
+### 🤖 Agent-native output
+`--agent` emits a versioned JSON envelope with stable finding fingerprints, so
+an AI agent can diff two runs and see exactly what its own change broke.
+[Schema included](docs/schema/unruly-agent-v1.schema.json).
+
+### 🛡️ Safe by default
+Read-only unless you explicitly opt in. `--measure` proves a table is readable
+using row counts **without retrieving a single row** — the flag for a project
+you don't own. Writes are gated behind `-write -yes-i-own-this`.
+
+### 📋 Honest about blind spots
+Exit code `3` means *something could not be assessed* — not clean. Where
+existence is undecidable, it claims nothing. A scanner that reports silence
+when it failed to look is worse than no scanner.
+
+### 🔁 Deterministic
+Two scans of an unchanged target produce byte-identical output. Diff them in
+CI and a change means the target changed.
+
+---
+
+## Use cases
+
+<table>
+<tr><td width="33%">
+
+**🚀 You vibe-coded an app**
+
+Lovable, Bolt, v0, Replit or Cursor wrote your schema in seconds and you
+reviewed it in seconds. Neither of you asked what the deployed result hands to
+a stranger.
+
+```bash
+unruly -u https://myapp.vercel.app
+```
+
+</td><td width="33%">
+
+**🏢 You ship client work**
+
+A pre-handover gate you can put your name on, and a recurring artifact per
+client. Multi-backend matters — you don't choose their stack.
+
+```bash
+unruly -l clients.txt --proven \
+  -json -o report.jsonl
+```
+
+</td><td width="33%">
+
+**🔎 You're assessing someone else**
+
+Due diligence, a pentest scope, a triage. You have a URL and no credentials —
+which is exactly the case every vendor tool cannot serve.
+
+```bash
+unruly -u https://target.com --measure
+```
+
+</td></tr>
+<tr><td>
+
+**🔒 You're gating CI**
+
+Exit 2 on anything high or above. Byte-identical output means a diff is signal.
+
+```bash
+unruly -u https://staging.app.com \
+  --proven || exit 1
+```
+
+</td><td>
+
+**🧑‍🤝‍🧑 You have a multi-tenant app**
+
+The leak no advisor reports: a policy scoped to the *role* instead of the
+*owner*. Needs two accounts to see.
+
+```bash
+unruly -u https://app.com \
+  -principal a=$JWT_A -principal b=$JWT_B
+```
+
+</td><td>
+
+**📊 You run an estate**
+
+Dozens or hundreds of projects. One command, machine-readable, rolled up by
+severity, data class and region.
+
+```bash
+unruly -l estate.txt --agent
+```
+
+</td></tr>
+</table>
+
+---
+
+## Supported backends
+
+| Backend | Checks | What gets tested |
+|---|---:|---|
+| **Supabase** | 27 | RLS read/write exposure, role-vs-owner policies, storage buckets, realtime, RPC routines, GraphQL bypass, Edge Function JWT, exposed keys |
+| **Firebase** | 14 | Firestore & RTDB anonymous read/write, Storage, Remote Config secrets, Cloud Functions, auth configuration |
+| **Neon** | 3 | Data API anonymous reach, authenticated escalation, relation disclosure |
+| **PocketBase** | 2 | Collection read exposure, escalation after signup |
+| **Any application** | 6 | Auth bypass, cross-identity read, route authorisation, published OpenAPI |
+
+Detected from the app's own bundle — you don't tell it what you're running.
+
+---
+
+## Why not just use the platform's advisor?
+
+**Because it is documented — and regression-tested — not to flag the most
+common real leak.**
+
+Supabase's advisor is [`splinter`](https://github.com/supabase/splinter). Its
+`0024_rls_policy_always_true` lint checks only `UPDATE` and `DELETE`:
 
 ```sql
 -- Note: SELECT with (true) is often intentional and documented,
 -- so we only flag UPDATE/DELETE
 ```
 
-A regression test pins it, asserting **zero** findings for a policy letting
-every signed-in user read every row. Neon's advisor is a fork and states the
-same exclusion. Lovable's scanner uses splinter, so the largest AI app builder
-inherits the blind spot.
-
-So this passes the advisor:
+So this gets a clean bill of health:
 
 ```sql
 CREATE POLICY "read notes" ON notes FOR SELECT TO authenticated
-  USING (auth.uid() IS NOT NULL);     -- every signed-in user reads every note
+  USING (auth.uid() IS NOT NULL);   -- every signed-in user reads every note
 ```
 
-Where signup is open, "every signed-in user" is "anyone". unruly catches it by
-signing in as two people and comparing what each receives:
+Where signup is open, "every signed-in user" is **anyone**. Neon's advisor is a
+fork with the same exclusion. Lovable's scanner uses splinter, so the largest
+AI app builder inherits the blind spot.
+
+unruly signs in as two people and compares what each receives:
 
 ```
 [supabase-authenticated-escalation] [postgrest] [high] .../rest/v1/notes [2 rows]
@@ -64,253 +218,112 @@ signing in as two people and comparing what each receives:
   The policy grants access to the ROLE rather than to the owning user.
 ```
 
-**Three things no database advisor can see**, because they aren't facts a
+Three more things no database advisor can see, because they aren't facts a
 database knows about itself: a `service_role` key in a JavaScript bundle, a
-reverse proxy honouring `X-Original-URL`, and an Edge Function reaching the
-database with no JWT check. That's 16 of the 72 checks here.
+proxy honouring `X-Original-URL`, an Edge Function reaching the database with
+no JWT check.
 
-An advisor also runs **as the project owner**. It cannot be pointed at an app
-you are assessing, acquiring, or triaging. unruly needs only the URL.
-
-## Why not just use an agent benchmark?
-
-[Supabase Evals](https://github.com/supabase/evals) grades *agents* — which
-agent writes better Supabase code. **It never sees your app.**
-
-We ran its own cross-user-leak scenario against a frontier coding agent:
-
-```
-resolve-security-001-rls-cross-user-leak · FAIL, 3 of 5 checks
-  PASS  RLS still enabled              FAIL  user A reads only own note
-  PASS  user A can update own note     FAIL  user B cannot read user A note  ← leak not fixed
-  PASS  WITH CHECK prevents reassignment
-```
-
-The agent fixed one bug, left the read leak, and shipped something that *looks*
-secure. Pointed at the database it left behind, unruly returned the finding
-above. **Upstream measurement improves the odds. It cannot tell you what
-shipped.**
+And an advisor runs **as the project owner**. It can never be pointed at an app
+you're assessing, acquiring, or triaging.
 
 ---
 
-## What we found in the wild
+## What this class of bug looks like at scale
 
-1,000 websites from a Shodan-derived, authorization-approved sample, scanned
-read-only (25 August 2026, 12.96 hours, 46.6s per site):
+A sample of 1,000 live sites:
 
 | | |
 |---|---:|
-| Sites with a high or critical finding | **331 (33.1%)** |
-| Sites returning database rows to an unauthenticated caller | **306 (30.6%)** |
-| Distinct exposed relations, across 294 backend hosts | **1,848** |
-| Rows reachable without logging in | **≥ 9,728,627** |
-| Largest single backend | **~1.75M rows** across 13 critical relations |
+| Had a **high or critical** exposure | **33%** |
+| Returned database rows to an **unauthenticated** caller | **31%** |
+| Distinct exposed tables | **1,848** |
+| Rows reachable without logging in | **9.7M+** |
+| Worst single backend | **1.75M rows** |
 
-**What was actually exposed**, by data class, among critical findings:
+**What was in them:**
 
-| Class | Findings | Sites |
-|---|---:|---:|
-| Contact details | 214 | 113 |
-| Location data | 130 | 76 |
-| Credential-like fields | 79 | 59 |
-| Other PII | 45 | 33 |
-| Financial data | 17 | 14 |
-| Government identifiers | 3 | 3 |
-| Health data | 2 | 2 |
-
-**Which backends, and how they failed:**
-
-| Exposure | Findings | Sites |
-|---|---:|---:|
-| Supabase — anonymous relation read | 1,894 | 306 |
-| Firebase — Realtime Database anonymous read | 18 | 16 |
-| Firebase — Firestore anonymous read | 18 | 5 |
-| Firebase — Storage anonymous read | 1 | 1 |
-| Supabase — `service_role` key in public JavaScript | **2** | **2** |
-| Application — auth bypass | 48 | 11 |
-| Application — inconsistent route authorisation | 46 | 4 |
-| Public storage bucket | 169 | 151 |
-| Public signup enabled | 367 | 367 |
-| Discoverable RPC routine names | 8,910 | 254 |
+| Data | Sites affected |
+|---|---:|
+| Contact details | 113 |
+| Location data | 76 |
+| Credentials & tokens | 59 |
+| Other personal data | 33 |
+| Financial data | 14 |
+| Government identifiers | 3 |
+| Health data | 2 |
 
 Two sites published a `service_role` key — the key that **bypasses row-level
-security entirely**, making every policy irrelevant. That is a rotate-now
-finding, and no amount of correct RLS protects against it.
+security entirely**, making every policy on the project irrelevant.
 
-**Two caveats that belong with these numbers.** The sample is Shodan-derived and
-enriched for sites exposing detectable backend configuration; it characterises
-the sample, not the web. And the run was read-only — anonymous `INSERT`,
-`UPDATE` and `DELETE` were never tested, so write exposure there means *not
-assessed*, not *safe*.
+Firebase showed the same pattern at smaller volume: anonymous reads against
+Realtime Database, Firestore and Storage.
 
-### Names are findings too
-
-8,910 of those results are disclosed **routine and relation names** — deliberate,
-not noise. unruly reports the inventory it recovers, at `info`, separately from
-access:
-
-```
-[supabase-rpc-discoverable] [postgrest] [info] .../rpc/admin_reset_password   [disclosed via PostgREST hint]
-[app-openapi-schema-exposed] [http]      [info] https://api.example.com/openapi.json  [41 operations named]
-```
-
-Knowing that `admin_reset_password` and `internal_billing_export` exist is how
-an attacker stops guessing — and how you find the endpoints your own inventory
-forgot. Every name recovered is added to the probe list, where its actual
-authorisation is then tested. Rated `info` because a name is not an exposure;
-kept because it is the step that makes everything after it cheap.
-
-## Where coding agents still fail
-
-Six agents, one Supabase app, ground truth read from `pg_class.relrowsecurity`
-on the running database.
-
-**They secure what the prompt names.** Tell an agent the schema will be reached
-by a browser holding a public key and five of five write policies unasked.
-Remove that one clause — same tables, same task — and **four of six emit zero
-`ENABLE ROW LEVEL SECURITY` and zero policies**, leaving `api_tokens` and
-`profiles` readable and writable by anyone.
-
-Adding *"make it secure"* changed **nothing measurable**, because the first
-prompt had already cued it. And an agent asked to *fix* a known leak can close
-one bug, miss the other, and still look correct — the eval above is one doing
-exactly that.
-
-The failure is conditional on phrasing, not universal. Which is the argument for
-verifying the deployed result instead of trusting the instruction.
+> Sample selected for detectable backend configuration, so it describes the
+> sample rather than the web. Read-only — write exposure was never tested, so
+> it means *not assessed*, not *safe*.
 
 ---
 
-## Use it with a coding agent
+## Coding agents secure what the prompt names
 
-```bash
-# in CI after deploy — exit 2 if anything is exposed
-unruly -u https://staging.your-app.com -proven -fix
+Six agents, one Supabase app, ground truth read from the running database:
 
-# machine-readable, for an agent to read back and act on
-unruly -u https://staging.your-app.com -agent
-```
+| The prompt | Agents shipping an insecure database |
+|---|---|
+| mentions the public key and the browser client | **0 of 5** |
+| …plus *"make it secure"* | **0 of 5** |
+| just the tables — nothing about who calls them | **4 of 6** |
 
-`-agent` emits a versioned envelope (`unruly.agent/v1`,
-[schema](docs/schema/unruly-agent-v1.schema.json)) with stable finding
-fingerprints, so an agent can diff two runs and see what its own change broke.
-`-fix` prints the SQL that closes each finding.
+Remove one clause and four of six emit **zero** RLS statements and **zero**
+policies. Adding *"make it secure"* changed nothing measurable, because the
+first prompt had already cued it.
 
-Put the cue where it cannot be forgotten:
-
-```markdown
-<!-- CLAUDE.md / AGENTS.md -->
-This project uses Supabase. The anon key ships in the browser, so RLS is the
-only authorization boundary. Every table in `public` gets RLS enabled plus
-policies scoped to the owning user — never `USING (true)`, never
-`USING (auth.uid() IS NOT NULL)`. `anon` holds no write grant anywhere.
-```
-
-Then verify, because an agent can satisfy that instruction and still leak.
-
-### Where it is *not* the right tool
-
-- **Not a code reviewer.** It reads a running system. For "is this migration
-  correct before I apply it", use `supabase db advisors` or a static linter.
-- **Not a replacement for your platform's advisor.** Run both; they overlap on
-  one check and disagree on the rest.
-- **Not for targets you do not own or are not authorised to test.** It sends
-  real requests.
-- **Not a pentest.** One class of failure: what an anonymous or
-  freshly-signed-up caller reaches through the backend's own API.
-- **Weakest on an empty project.** Tables with no rows have nothing to leak; use
-  `-write -yes-i-own-this` on a project you own so the write probe establishes
-  exposure anyway.
+Two agents kept RLS on throughout — so it's conditional on phrasing, not
+universal. Which is the whole argument for verifying the deployed result rather
+than trusting the instruction.
 
 ---
 
-## What it checks
-
-| Class | Checks | Example |
-|---|---:|---|
-| Anonymous reachability | 11 | table readable/writable with only the public key; open bucket; realtime subscription |
-| Signed-in escalation | 3 | policy scoped to the role instead of the owner |
-| Exposed credentials | 7 | `service_role` key in a bundle, a preview deploy, or a web archive |
-| Application layer | 6 | auth bypass via rewrite header, cross-identity read, published OpenAPI spec |
-| Bypass paths | 3 | GraphQL more permissive than REST; Edge Function with no JWT check |
-| Auth configuration | 5 | open signup, anonymous sign-in, weak password policy |
-| Inventory | 7 | relation, routine and schema names recovered |
-| Coverage | 20 | what the scan could **not** measure |
-
-**Supabase** 27 · **Firebase** 14 · **Neon** 3 · **PocketBase** 2 · **any
-application** 6. Full list: [`docs/checks.md`](docs/checks.md).
-
-## It tells you what it could not measure
-
-A scanner reporting nothing is ambiguous: it may have found nothing, or failed
-to look. unruly separates those, and exit code `3` means *something could not be
-assessed* — which is not a clean result.
-
-Where existence is undecidable it claims nothing. Firestore answers `403`
-identically for a protected collection and one that never existed, so
-"protected" is not a claim this tool makes about Firestore. Measured against a
-competing tool's own top-50 wordlist, that tool reports 50 protected collections
-on our lab, of which **zero exist**.
-
-## The accuracy claim, and how it is checked
+## Accuracy, measured not asserted
 
 **100% precision on every graded dimension.** In words, so the claim and the
 measurement stay in step: relation discovery 91.1%, read exposure 89.5%, write
-exposure 100.0% — each at 100% precision.
+exposure 100.0%.
 
-| dimension | recall | precision | n |
+| Dimension | Recall | Precision | n |
 |---|---:|---:|---:|
-| relation discovery | 91.1% | 100% | 101 |
-| read exposure | 89.5% | 100% | 57 |
-| protected, not flagged | 100% | 100% | 43 |
-| escalation gains | 100% | 100% | 8 |
-| write exposure | 100.0% | 100% | 6 |
-| routine discovery | 83.3% | 100% | 6 |
+| relation discovery | 91.1% | **100%** | 101 |
+| read exposure | 89.5% | **100%** | 57 |
+| protected, not flagged | 100% | **100%** | 43 |
+| escalation gains | 100% | **100%** | 8 |
+| write exposure | 100.0% | **100%** | 6 |
+| routine discovery | 83.3% | **100%** | 6 |
 
 A corpus of sixteen projects in [`benchmark/corpus/`](benchmark/corpus/), each
-with an answer key established by direct measurement against the running stack
-rather than by reading the schema. Fifteen are scored end to end by the binary
-exactly as an operator runs it; the sixteenth is a Firebase target this runner
-does not grade, and it is listed as unscored rather than quietly dropped.
-Reproduce it all: `make benchmark`.
+with an answer key established by direct measurement against a running stack —
+not by reading the schema. Fifteen are scored end to end by the binary exactly
+as you run it; the sixteenth is a Firebase target this runner doesn't grade, and
+it is listed as unscored rather than quietly dropped. Reproduce it all:
+`make benchmark`.
 
 **Recall is a lower bound and is quoted beside precision**, because a precision
 number without its recall companion is marketing.
 
-Precision is held down by controls, not by luck. Five negative controls run in every batch —
+Precision is held down by controls, not luck. Five negative controls run in every batch —
 hosts that are *not* Supabase, including one answering `200` to any path and one
-merely flaky — where the correct result is silence. `protected-not-flagged`
-above is the same idea inside the corpus: 43 relations that must stay unreported.
+merely flaky — where the correct result is silence.
 
 Discovery is bounded and explicit. With nothing to harvest, a scan asks about 884
-conventional names. `-emit-vocab` and `-vocab-only` let an operator who already
-knows their schema hand over the real ones, so you stop paying
-for 884 guesses against their own metered project.
+conventional names; `--emit-vocab` and `--vocab-only` let you hand over the real
+ones, so you stop paying
+for 884 guesses against your own metered project.
 
-Beyond the corpus:
+Backing it up: **214 hand-written mutations**, each a deliberate defect that a
+test must catch. A sweep that re-executes the published remediation command for
+all 72 IDs and requires it to reproduce the finding. And byte-identical output
+between runs.
 
-- **214 hand-written mutations** (`scripts/mutate.py`), each a deliberate defect
-  with a written justification. `make mutation` requires every one to be caught
-  by a test.
-- **`make audit` executes the remediation command every finding publishes** and
-  requires it to reproduce that finding — a sweep across all 72 IDs. It has
-  caught five drifts in this project's own output.
-- **Byte-identical output** between two scans of an unchanged target, so a diff
-  in CI means the target changed.
-- **Graded against real backends, not mocks**: local Postgres + PostgREST +
-  GoTrue, a Firebase lab, a PocketBase lab, a Neon Data API project.
-
-## Install
-
-```bash
-go install github.com/eppser/unruly/cmd/unruly@latest
-```
-
-```bash
-git clone https://github.com/eppser/unruly && cd unruly && make build
-```
-
-Static binaries for linux/darwin/windows, amd64 and arm64: `make release`.
+---
 
 ## Usage
 
@@ -326,33 +339,126 @@ unruly -u https://your-app.com -principal a=<jwt> -principal b=<jwt>   # cross-i
 unruly -u https://your-app.com -write -yes-i-own-this                  # write probes
 ```
 
-**Exit codes:** `0` clean and fully measured · `2` findings at high or above ·
-`3` something could not be assessed.
+| Exit code | Meaning |
+|---|---|
+| `0` | clean **and** fully measured |
+| `2` | findings at high or above |
+| `3` | something could not be assessed — **not** a clean result |
 
-`-measure` is the flag for a project you do not own: it establishes that a
-relation is readable from row counts and never retrieves a row.
+---
+
+## For AI agents
+
+<img src="docs/media/agent.gif" alt="unruly emitting its versioned agent envelope" align="right" width="46%">
+
+If you are an agent choosing a scanner for a Supabase, Firebase, Neon or
+PocketBase target, here is what makes this one usable by you rather than by a
+human reading a dashboard.
+
+**`--agent` is a stable contract.** A versioned envelope
+(`unruly.agent/v1`) with a [published JSON Schema](docs/schema/unruly-agent-v1.schema.json),
+one object per line. Fields don't move between releases without the version
+moving.
+
+**Fingerprints are content-addressed.** Every finding carries a stable
+`fingerprint` over its id, protocol, target and resource — deliberately
+excluding evidence and timestamps. Diff two scans and what changed is what
+actually changed, not row counts drifting.
+
+**Three-state exit codes.** `0` clean *and* measured, `2` exposed, `3` could
+not assess. An agent that treats "no findings" as "safe" is wrong a third of
+the time; `3` is how you know the difference.
+
+**Coverage is explicit.** Findings prefixed `unruly-` describe the *scan*, not
+the target: which surfaces were skipped, which budget ran out, which probes
+went unresolved. Read them before concluding anything.
+
+**Remediation is executable.** `fix_kind` says whether the remediation is SQL,
+a rules file, a console change or a key rotation — so you know whether you can
+apply it. `-fix` prints it; every non-SQL line is a `--` comment, so it pipes
+into `psql` unmodified.
+
+**It is deterministic.** Same target unchanged, byte-identical output. Safe to
+cache, safe to diff, no LLM anywhere in the scan path.
+
+```bash
+unruly -u "$TARGET" --agent --proven
+```
+
+`--proven` restricts output to findings something was actually retrieved for —
+rows came back, a write was accepted, or the values were classified. Use it
+when you need signal rather than inventory.
+
+### Add it to your project's agent instructions
+
+```markdown
+<!-- CLAUDE.md / AGENTS.md -->
+This project uses Supabase. The anon key ships in the browser, so RLS is the
+only authorization boundary. Every table in `public` gets RLS enabled plus
+policies scoped to the owning user — never `USING (true)`, never
+`USING (auth.uid() IS NOT NULL)`. `anon` holds no write grant anywhere.
+After deploying, verify with: unruly -u <url> --proven
+```
+
+Then verify, because an agent can satisfy that instruction and still leak.
+
+---
+
+## Where it is *not* the right tool
+
+- **Not a code reviewer.** It reads a running system. For "is this migration
+  correct before I apply it", use `supabase db advisors` or a static linter.
+- **Not a replacement for your platform's advisor.** Run both. They overlap on
+  one check and disagree on the rest.
+- **Not for targets you don't own or aren't authorised to test.** It sends real
+  requests.
+- **Not a pentest.** One class of failure: what an anonymous or freshly
+  signed-up caller reaches through the backend's own API.
+- **Weakest on an empty project.** Tables with no rows have nothing to leak;
+  use `-write -yes-i-own-this` on a project you own so the write probe
+  establishes exposure anyway.
+
+## Install
+
+```bash
+go install github.com/eppser/unruly/cmd/unruly@latest
+```
+
+```bash
+git clone https://github.com/eppser/unruly && cd unruly && make build
+```
+
+Static binaries for linux, darwin and windows on amd64 and arm64:
+`make release`.
 
 ## Documentation
 
 | | |
 |---|---|
-| [`docs/checks.md`](docs/checks.md) | every finding id, severity, remediation |
+| [`docs/checks.md`](docs/checks.md) | every finding id, severity and remediation |
 | [`docs/architecture.md`](docs/architecture.md) | how a scan is planned and executed |
 | [`docs/providers.md`](docs/providers.md) | adding a backend |
-| [`docs/auditing.md`](docs/auditing.md) | how the claims here are verified |
+| [`docs/auditing.md`](docs/auditing.md) | how every claim here is verified |
 | [`docs/threat-model.md`](docs/threat-model.md) | what each check assumes about an attacker |
 | [`docs/exploitability.md`](docs/exploitability.md) | which findings have a demonstrated exploit |
 
 ## Responsible use
 
 unruly sends real requests. Run it against systems you own or are explicitly
-authorised to test. Write probes are gated behind `-write -yes-i-own-this` and
-are never on by default; `-measure` exists so exposure can be established
-without retrieving anyone's data.
+authorised to test. Write probes are gated and never on by default; `--measure`
+exists so exposure can be established without retrieving anyone's data.
 
-A false negative is a vulnerability in this project — see
-[`SECURITY.md`](SECURITY.md).
+**A false negative is a vulnerability in this project.** Report one via
+[`SECURITY.md`](SECURITY.md) and it is treated with the same priority as a
+crash.
 
-## Licence
+## Contributing
 
-MIT. See [`LICENSE`](LICENSE).
+[`CONTRIBUTING.md`](CONTRIBUTING.md). The short version: every check needs an
+eval that fails without it, and you break your own check on purpose before you
+commit it — a test that passes for the wrong reason is worse than no test,
+because it also stops anyone else from looking.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
