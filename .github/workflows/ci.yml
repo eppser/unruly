@@ -38,6 +38,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The provenance check asks git whether the commit RESULTS.md names
+          # is in this repository. checkout defaults to depth 1, so every
+          # commit but the tip is "not in this repository" and the check fails
+          # on a history that is perfectly intact.
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'

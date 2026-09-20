@@ -217,6 +217,11 @@ fixtures-pull: ## Pre-pull every fixture image, serially and with retries
 	done
 
 fixtures-up: ## Start every eval fixture and mint their JWTs
+	@# Before compose, not after. These three are bind-mounted into nginx, and
+	@# Docker creates a missing bind-mount source as root. On a Linux runner
+	@# the generator that writes into them then fails with "Permission denied";
+	@# on a Mac it does not, which is why this survived to CI.
+	@mkdir -p fixtures/lab/site fixtures/lab/preview fixtures/lab/archive
 	@cd fixtures/lab && docker compose up -d --remove-orphans
 	@cd fixtures/hardened && docker compose up -d
 	@cd fixtures/matrix && docker compose up -d

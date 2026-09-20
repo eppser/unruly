@@ -193,6 +193,17 @@ func TestTheAccuracyClaimMatchesTheMeasurement(t *testing.T) {
 			"cannot tell what these numbers describe")
 	}
 	if err := exec.Command("git", "-C", root, "cat-file", "-e", m[1]+"^{commit}").Run(); err != nil {
+		// A shallow clone has every commit but the tip missing, which is not
+		// the same defect and has a different fix. Saying "not in this
+		// repository" to someone whose history is intact sends them to
+		// re-measure a benchmark that was fine.
+		shallow, _ := exec.Command("git", "-C", root, "rev-parse",
+			"--is-shallow-repository").Output()
+		if strings.TrimSpace(string(shallow)) == "true" {
+			t.Skipf("shallow clone: cannot check whether commit %s exists. "+
+				"Fetch the full history (actions/checkout needs fetch-depth: 0) "+
+				"to run this check", m[1])
+		}
 		t.Errorf("RESULTS.md names commit %s, which is not in this repository", m[1])
 		return
 	}
