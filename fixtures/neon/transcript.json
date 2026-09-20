@@ -1,0 +1,187 @@
+{
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/anon_readable?select=*",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/anon_readable?select=*",
+      "auth": "authed",
+      "status": 403,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"42501\",\"message\":\"permission denied for table anon_readable\",\"details\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/open_guestbook?select=*",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/open_guestbook?select=*",
+      "auth": "authed",
+      "status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "body": "[{\"id\":1,\"body\":\"SYNTHETIC-seed-entry\"}]"
+    },
+    {
+      "method": "GET",
+      "path": "/owner_only?select=*",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/owner_only?select=*",
+      "auth": "authed",
+      "status": 403,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"42501\",\"message\":\"permission denied for table owner_only\",\"details\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/rls_disabled?select=*",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/rls_disabled?select=*",
+      "auth": "authed",
+      "status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "body": "[{\"id\":1,\"owner_sub\":\"user-alpha\",\"card_last4\":\"0000\"}, \n {\"id\":2,\"owner_sub\":\"user-beta\",\"card_last4\":\"1111\"}, \n {\"id\":3,\"owner_sub\":\"user-gamma\",\"card_last4\":\"2222\"}]"
+    },
+    {
+      "method": "GET",
+      "path": "/rls_enforced?select=*",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/rls_enforced?select=*",
+      "auth": "authed",
+      "status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "GET",
+      "path": "/rls_no_policy?select=*",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/rls_no_policy?select=*",
+      "auth": "authed",
+      "status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "GET",
+      "path": "/unruly_control_relation_that_cannot_exist?select=*",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}"
+    },
+    {
+      "method": "GET",
+      "path": "/unruly_control_relation_that_cannot_exist?select=*",
+      "auth": "authed",
+      "status": 404,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"PGRST205\",\"details\":null,\"hint\":null,\"message\":\"Could not find the table 'public.unruly_control_relation_that_cannot_exist' in the schema cache\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/anon_readable",
+      "auth": "authed",
+      "status": 403,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"42501\",\"message\":\"permission denied for table anon_readable\",\"details\":null,\"hint\":null}",
+      "request_body": "{}"
+    },
+    {
+      "method": "POST",
+      "path": "/open_guestbook",
+      "auth": "anon",
+      "status": 400,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"message\":\"missing authentication credentials: required authorization bearer token in JWT format\",\"code\":null,\"detail\":null,\"hint\":null}",
+      "request_body": "{}"
+    },
+    {
+      "method": "POST",
+      "path": "/open_guestbook",
+      "auth": "authed",
+      "status": 201,
+      "body": "",
+      "request_body": "{}"
+    },
+    {
+      "method": "POST",
+      "path": "/owner_only",
+      "auth": "authed",
+      "status": 403,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"42501\",\"message\":\"permission denied for table owner_only\",\"details\":null,\"hint\":null}",
+      "request_body": "{}"
+    },
+    {
+      "method": "POST",
+      "path": "/rls_disabled",
+      "auth": "authed",
+      "status": 403,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"42501\",\"message\":\"permission denied for table rls_disabled\",\"details\":null,\"hint\":null}",
+      "request_body": "{}"
+    },
+    {
+      "method": "POST",
+      "path": "/rls_enforced",
+      "auth": "authed",
+      "status": 403,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"42501\",\"message\":\"permission denied for table rls_enforced\",\"details\":null,\"hint\":null}",
+      "request_body": "{}"
+    },
+    {
+      "method": "POST",
+      "path": "/rls_no_policy",
+      "auth": "authed",
+      "status": 403,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"42501\",\"message\":\"permission denied for table rls_no_policy\",\"details\":null,\"hint\":null}",
+      "request_body": "{}"
+    },
+    {
+      "method": "POST",
+      "path": "/unruly_control_relation_that_cannot_exist",
+      "auth": "authed",
+      "status": 404,
+      "content_type": "application/json; charset=utf-8",
+      "body": "{\"code\":\"PGRST205\",\"details\":null,\"hint\":null,\"message\":\"Could not find the table 'public.unruly_control_relation_that_cannot_exist' in the schema cache\"}",
+      "request_body": "{}"
+    }
+  ]
+}

@@ -1,0 +1,316 @@
+# Ground truth for corpus project 12: nine readable relations, two findings.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 12-content-vs-jsonb. Row counts and key counts
+# come from psql in the container; every "is this string in the response" claim
+# comes from a real anonymous HTTP GET.
+#
+# The one property this project measures that no other does: precision on data
+# KIND. Exposure is uniform here — all nine relations are anonymously readable,
+# RLS is off everywhere, no relation accepts a write — so exposure carries zero
+# information and the entire score comes from which relations a scanner
+# reports. Seven of the nine are a public website's own content and reporting
+# any of them is noise. Two of them hold secrets inside a generic jsonb column
+# that no column-name heuristic can see.
+#
+# A scanner that flags every readable table scores 2 true positives and 7 false
+# positives on this target.
+
+name: 12-content-vs-jsonb
+project_ref: bench-12
+base_url: http://127.0.0.1:54511
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  Two of the CMS tables carry a deliberate trap. team_members has a column
+  literally called `email` holding press@example.invalid, and blog_posts has
+  `author_email` holding the byline addresses printed under each post. Both are
+  published contact details for a public company. A column name is not a data
+  classification, and neither of these columns is listed in sensitive_columns
+  below — on purpose.
+
+  The measurement on `events` is the pair of checks at limit=46 and limit=47.
+  The first sensitive row is id 47 of 200, so forty-six rows can be read in id
+  order without seeing anything. Every scanner that samples one row, including
+  this corpus's own checker, reads a page-view event and moves on.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    # Exposure is uniform, which is what makes this a precision test rather
+    # than an exposure test. Nine relations, all SELECT-granted to anon, no
+    # write privilege anywhere, no RLS anywhere.
+    - name: nine relations are SELECT-granted to anon
+      sql: "SELECT count(DISTINCT table_name) FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee='anon' AND privilege_type='SELECT'"
+      expect: 9
+    - name: anon holds no write privilege on anything
+      sql: "SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee='anon' AND privilege_type IN ('INSERT','UPDATE','DELETE')"
+      expect: 0
+    - name: RLS is not enabled on any relation
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relrowsecurity"
+      expect: 0
+
+    # --- the needle, counted exactly --------------------------------------
+    # `?` is jsonb's key-exists operator. It is safe in these strings because
+    # they never leave psql; the checker passes them to `psql -tAc` as one
+    # argv element, so no URL parser and no shell ever sees them.
+    - name: events holds 200 rows
+      sql: "SELECT count(*) FROM public.events"
+      expect: 200
+    - name: two of them carry a card_number key
+      sql: "SELECT count(*) FROM public.events WHERE payload ? 'card_number'"
+      expect: 2
+    - name: two of them carry a password_hash key
+      sql: "SELECT count(*) FROM public.events WHERE payload ? 'password_hash'"
+      expect: 2
+    - name: two of them carry an ssn key
+      sql: "SELECT count(*) FROM public.events WHERE payload ? 'ssn'"
+      expect: 2
+    - name: six rows out of 200 carry any of the three
+      sql: "SELECT count(*) FROM public.events WHERE payload ?| array['card_number','password_hash','ssn']"
+      expect: 6
+    # The number that decides whether a scanner finds this at all.
+    - name: the first sensitive row is id 47, so 46 rows read nothing
+      sql: "SELECT min(id) FROM public.events WHERE payload ?| array['card_number','password_hash','ssn']"
+      expect: 47
+    - name: the six sensitive ids are fixed, so the positions are reproducible
+      sql: "SELECT string_agg(id::text,',' ORDER BY id) FROM public.events WHERE payload ?| array['card_number','password_hash','ssn']"
+      expect: 47,63,88,119,150,191
+
+    # --- the second needle -------------------------------------------------
+    - name: settings holds 14 rows
+      sql: "SELECT count(*) FROM public.settings"
+      expect: 14
+    - name: exactly one of them holds a Stripe-shaped live secret key
+      sql: "SELECT count(*) FROM public.settings WHERE value::text LIKE '%sk_live_%'"
+      expect: 1
+    - name: the same row holds an AWS-shaped access key id
+      sql: "SELECT count(*) FROM public.settings WHERE value::text LIKE '%AKIA%'"
+      expect: 1
+    - name: in key order it is the ninth row of fourteen
+      sql: "SELECT n FROM (SELECT key, row_number() OVER (ORDER BY key) AS n FROM public.settings) s WHERE key='integrations.credentials'"
+      expect: 9
+
+  relations:
+    # ---------------------------------------------------------------------
+    # The seven that must NOT be reported. All readable, all intentionally
+    # public, none of them carrying a sensitive_columns list.
+    # ---------------------------------------------------------------------
+    - name: site_sections
+      schema: public
+      rows: 6
+      read_exposed: true
+      read_status: 206
+
+    # TRAP. `author_email` holds the byline address printed under every post on
+    # the public blog. Readable, and not a leak. Deliberately absent from any
+    # sensitive_columns list.
+    - name: blog_posts
+      schema: public
+      rows: 5
+      read_exposed: true
+      read_status: 206
+
+    - name: faq_entries
+      schema: public
+      rows: 8
+      read_exposed: true
+      read_status: 206
+
+    - name: pricing_tiers
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+
+    # TRAP. A column named exactly `email`, holding press@example.invalid — the
+    # address on the contact page. This is the single most likely false
+    # positive on the whole target.
+    - name: team_members
+      schema: public
+      rows: 5
+      read_exposed: true
+      read_status: 206
+
+    - name: press_releases
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+
+    - name: changelog
+      schema: public
+      rows: 7
+      read_exposed: true
+      read_status: 206
+
+    # ---------------------------------------------------------------------
+    # The two that MUST be reported. Note that the only column named here is
+    # the jsonb one: the sensitivity is in the values, and `payload` is the
+    # column those values are in. There is nothing else to point at.
+    # ---------------------------------------------------------------------
+    - name: events
+      schema: public
+      rows: 200
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [payload]
+
+    - name: settings
+      schema: public
+      rows: 14
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [value]
+
+  checks:
+    # --- THE MEASUREMENT ---------------------------------------------------
+    # These four checks are the project. limit=1 is the shape of almost every
+    # scanner's sampling probe and of this corpus's own read check; it returns
+    # a page-view event and nothing else. Forty-six rows in id order still
+    # return nothing. The forty-seventh returns a card number.
+    - name: a one-row sample of events shows nothing sensitive
+      method: GET
+      path: /events?select=*&limit=1
+      expect_status: 200
+      expect_body_missing: "card_number"
+    - name: forty-six rows in id order still show nothing sensitive
+      method: GET
+      path: /events?select=*&order=id.asc&limit=46
+      expect_status: 200
+      expect_body_missing: "card_number"
+    - name: the forty-seventh row is a card number
+      method: GET
+      path: /events?select=*&order=id.asc&limit=47
+      expect_status: 200
+      expect_body_contains: "4111111111111111"
+    - name: reading the whole relation returns hashes and a national ID too
+      method: GET
+      path: /events?select=*&limit=200
+      expect_status: 200
+      expect_body_contains: "000-00-0000"
+    - name: and the bcrypt hashes with it
+      method: GET
+      path: /events?select=*&limit=200
+      expect_status: 200
+      expect_body_contains: "password_hash"
+
+    # No PGRST_DB_MAX_ROWS is configured, so a bare GET with no query string
+    # returns all 200 rows and the secrets with them. Recorded because it is
+    # the honest statement of how exposed this is: the sampling probe is what
+    # hides the finding, not the server.
+    - name: a bare GET with no query string returns everything
+      method: GET
+      path: /events
+      expect_status: 200
+      expect_body_contains: "4111111111111111"
+
+    # --- the second needle, same shape -------------------------------------
+    - name: a one-row sample of settings shows nothing sensitive
+      method: GET
+      path: /settings?select=*&limit=1
+      expect_status: 200
+      expect_body_missing: "sk_live_"
+    - name: eight rows in key order still show nothing
+      method: GET
+      path: /settings?select=*&order=key.asc&limit=8
+      expect_status: 200
+      expect_body_missing: "sk_live_"
+    - name: the ninth row holds a Stripe-shaped live secret key
+      method: GET
+      path: /settings?select=*&order=key.asc&limit=9
+      expect_status: 200
+      expect_body_contains: "sk_live_00000000000000000000000000"
+    - name: and an AWS-shaped access key id in the same value
+      method: GET
+      path: /settings?select=*&order=key.asc&limit=9
+      expect_status: 200
+      expect_body_contains: "AKIAIOSFODNN7EXAMPLE"
+
+    # --- the traps, asserted as READABLE and as NOT findings ---------------
+    # The checker cannot assert "must not be reported" — that is the scanner's
+    # score, not a property of the stack. What it CAN assert is that the bait
+    # is really there and really readable, so a run that misses these did not
+    # miss them by accident of configuration.
+    - name: team_members really does expose a column called email
+      method: GET
+      path: /team_members?select=*&order=id.asc&limit=1
+      expect_status: 200
+      expect_body_contains: "press@example.invalid"
+    - name: blog_posts really does expose author_email
+      method: GET
+      path: /blog_posts?select=*&order=id.asc&limit=1
+      expect_status: 200
+      expect_body_contains: "dana.writes@example.invalid"
+
+    # --- exposure carries no information here ------------------------------
+    - name: every relation refuses INSERT, so the write axis is constant
+      method: POST
+      path: /events
+      body: '{"kind":"probe","payload":{}}'
+      expect_status: 401
+      expect_body_contains: "42501"
+    - name: a nonexistent relation is 404 PGRST205, so discovery is decidable
+      method: GET
+      path: /no_such_relation_here
+      expect_status: 404
+      expect_body_contains: "PGRST205"
+
+    # SURPRISE, found while writing this key. PostgREST 14.3 attaches a
+    # fuzzy-match HINT to PGRST205 that names a REAL relation. Guessing the
+    # singular of a table's name is enough to be handed the plural, so a
+    # wordlist that contains `event` discovers `events` without ever containing
+    # it. The oracle has a similarity floor: a name far enough from everything
+    # gets hint: null.
+    - name: a near-miss 404 names a real relation in its hint
+      method: GET
+      path: /event
+      expect_status: 404
+      expect_body_contains: "Perhaps you meant the table 'public.events'"
+    - name: a far-miss 404 discloses nothing
+      method: GET
+      path: /zzzzzz
+      expect_status: 404
+      expect_body_contains: '"hint":null'
+
+  unverified:
+    - claim: >
+        That seven of the nine relations must NOT be reported is the scoring
+        rule for this target, and no check in this file enforces it.
+      why: >
+        lib/check.py verifies properties of the running stack, not properties
+        of a scanner's output. It can prove the traps are readable and that
+        their contents are exactly what this key says; whether a given scanner
+        reports them is measured by the grading pass that consumes this key,
+        not here.
+    - claim: >
+        Whether a value-reading scanner can afford this in the field is not
+        measured.
+      why: >
+        Finding the events row costs 47 rows on this target because the data is
+        arranged to make the number quotable. A real relation with ten million
+        rows and six poisoned ones is the same problem with a sampling budget
+        attached, and nothing in this corpus measures the cost side.
+    - claim: >
+        Detecting the secrets by SHAPE rather than by key name is untested.
+      why: >
+        The two settings values carry an `sk_live_` prefix and an `AKIA`
+        prefix, which are recognisable without reading the surrounding key
+        names. The events payloads are not: 4111111111111111 is a valid Luhn
+        PAN and 000-00-0000 is SSN-shaped, but both need the key name or a
+        format check to be worth anything. This key does not separate the two
+        detection strategies.

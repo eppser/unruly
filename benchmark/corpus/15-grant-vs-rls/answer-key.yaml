@@ -1,0 +1,124 @@
+# Ground truth for corpus project 15: RLS state varies, and so do the GRANTs --
+# and the point is that neither one alone predicts the outcome.
+#
+# The one property this project measures that no other does: GRANT-AWARENESS.
+# Project 03 holds privileges constant and varies the policy. This one puts the
+# privilege back in play, because a scanner can pass 03 and still get this
+# wrong -- and a major vendor's own console does.
+#
+# Row-Level Security is half a permission. A table with RLS switched OFF is
+# open ONLY IF some role also holds a GRANT on it; with no GRANT, PostgreSQL
+# answers 42501 before RLS is ever consulted. So "RLS is disabled" is an input
+# to a finding, never a finding.
+#
+# The two rows that matter are rls_off_ungranted and rls_on_permissive. They
+# fail in opposite directions, and a tool that reasons from relrowsecurity
+# alone gets BOTH wrong: it reports the first, which is unreachable, and
+# clears the second, which hands every row to anyone.
+
+name: 15-grant-vs-rls
+project_ref: bench-15
+base_url: http://127.0.0.1:54541
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  Observed on a live Neon Data API on 2026-08-21 and reproduced here as
+  ordinary PostgreSQL, because it is ordinary PostgreSQL: Neon's console warns
+  that four tables "have RLS disabled -- all authenticated users can view all
+  rows in these table(s)", and one of the four holds no GRANT and answers
+  403/42501 to every caller. The console reads relrowsecurity and stops. The
+  table below is that warning turned into a claim a scanner can be graded on,
+  with no Neon-specific anything: the same mistake is available to any tool on
+  any PostgREST target.
+
+# No write claims anywhere below. This project measures READ reachability
+# against RLS state and GRANTs, and the harness refuses to grade a write
+# outcome that no probe measured -- correctly: an unprobed 'false' is a
+# guess wearing the same syntax as a measurement. Writes are project 01's
+# variable, and duplicating them here would add an axis this project does
+# not control.
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    # The experimental design, asserted rather than described.
+    - name: public holds exactly 4 tables
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'"
+      expect: 4
+    - name: exactly 2 tables have RLS disabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT c.relrowsecurity"
+      expect: 2
+    # The crux. Both RLS-disabled tables look identical to a tool that reads
+    # only relrowsecurity; exactly one of them is reachable.
+    - name: exactly 1 of the 2 RLS-disabled tables carries any GRANT
+      sql: "SELECT count(DISTINCT table_name) FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee IN ('anon','authenticated') AND table_name IN ('rls_off_granted','rls_off_ungranted')"
+      expect: 1
+    - name: rls_off_ungranted carries no GRANT to anon or authenticated
+      sql: "SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee IN ('anon','authenticated') AND table_name='rls_off_ungranted'"
+      expect: 0
+    - name: rls_on_nopolicy has zero policies
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='rls_on_nopolicy'"
+      expect: 0
+    - name: rls_on_permissive has a policy that admits everyone
+      sql: "SELECT qual FROM pg_policies WHERE schemaname='public' AND tablename='rls_on_permissive'"
+      expect: "true"
+
+  relations:
+    # ------------------------------------------------------------------
+    # RLS OFF and GRANTED. Genuinely open, and the thing the false positive
+    # below is meant to be confused with.
+    # ------------------------------------------------------------------
+    - name: rls_off_granted
+      schema: public
+      rows: 3
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [card_last4]
+
+    # ------------------------------------------------------------------
+    # RLS OFF and NOT GRANTED. The headline. Identical relrowsecurity to the
+    # relation above and not reachable by anyone: 42501 before RLS is
+    # consulted. Reporting this is the vendor console's false positive.
+    # ------------------------------------------------------------------
+    - name: rls_off_ungranted
+      schema: public
+      rows: 1
+      read_exposed: false
+      read_status: 401
+      authenticated_read_exposed: false
+
+    # ------------------------------------------------------------------
+    # RLS ON, granted, zero policies: deny-all. Answers 200 with an empty
+    # array, which one observation cannot tell from an empty table.
+    # ------------------------------------------------------------------
+    - name: rls_on_nopolicy
+      schema: public
+      rows: 1
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+
+    # ------------------------------------------------------------------
+    # RLS ON, granted, USING (true). The opposite error: a scanner that treats
+    # relrowsecurity = true as protection clears a table that hands every row
+    # to anyone.
+    # ------------------------------------------------------------------
+    - name: rls_on_permissive
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [email]

@@ -1,0 +1,264 @@
+# Ground truth for corpus project 08: a real rate limit in front of a real
+# PostgREST.
+#
+# This key is written differently from every other one in the corpus, and the
+# difference is the point. On this target an HTTP answer is not a fact about
+# the target -- it is a fact about when you asked. The same GET returns 200 or
+# 429 depending on the last two hundred milliseconds of traffic, so a key that
+# asserted "customers read_exposed: true" would be asserting something the
+# target does not have.
+#
+# So ground truth here comes from psql on 127.0.0.1:54472, which goes straight
+# to the database and is not behind the limiter, and every HTTP claim uses
+# expect_status_in with 429 in the allowed set. That is the honest way to pin a
+# target whose HTTP answers are non-deterministic, and it is worth saying
+# plainly: the relation list any HTTP scan produces here is a LOWER BOUND.
+#
+# The one property this project measures that no other does: 429 arrives as a
+# function of REQUEST RATE, not of which relation was asked for. There is a
+# fixture in this repository (fixtures/lab/throttled.conf) that refuses four
+# hard-coded names; that is a mock of the symptom. Here the refusal is real,
+# it is timing-dependent, and the relation list moves between runs.
+
+name: 08-rate-limited
+project_ref: bench-08
+base_url: http://127.0.0.1:54471
+# The managed-product shape: PostgREST under a gateway at /rest/v1/, and the
+# PostgREST container is not published to the host. There is no unthrottled
+# way in over HTTP.
+rest_prefix: /rest/v1/
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+# Nineteen of this project's thirty relations are listed below, and WHICH of
+# them a scan resolves moves between identical runs -- the notes measure that
+# with six cold runs. Both facts are stated as fields because the first thing
+# to score this corpus read the list as complete and stable, and reported 15%
+# recall and 50% precision for a target whose own key says asserting a
+# particular set would be "asserting the opposite of what this target is for".
+relations_are_a_sample: true
+discovery_is_unstable: >
+  a limiter of 5r/s decides which candidates answer; the count is repeatable
+  and the membership is not, so recall over a fixed list measures the bucket
+  rather than the scanner
+
+notes: >
+  nginx limit_req_zone rate=5r/s, limit_req burst=12 nodelay,
+  limit_req_status 429. One request per 200ms sustained, a queue twelve deep,
+  and anything past that refused immediately rather than delayed.
+
+  MEASURED with measure-scan.sh: 30 relation probes fired in parallel resolve
+  13 and get 429 on 17. Fired again immediately, with the bucket still empty,
+  they resolve 0 and get 429 on all 30 -- the target reads as completely
+  unreachable. Paced 250ms apart, 29 of 30 resolve. The count of relations
+  found is therefore anywhere from 0 to 30 for the same target in the same
+  minute, and WHICH thirteen resolve changes between otherwise identical runs.
+
+  A correct scanner must (a) find at least some relations, (b) NOT report this
+  target as clean or as absent, and (c) report the unresolved probes as
+  unresolved rather than dropping them. The third is the one that matters: a
+  candidate that got no readable answer is indistinguishable in a report from
+  one that was measured and found absent, unless something says so.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    # Everything below this line goes straight to Postgres on 54472. None of
+    # it passes the limiter, so none of it moves between runs.
+    - name: public holds exactly 30 relations
+      sql: "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
+      expect: 30
+    - name: 17 relations carry a SELECT grant for anon
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT')"
+      expect: 17
+    - name: 16 relations grant SELECT and have RLS off, so they return rows
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT') AND NOT c.relrowsecurity"
+      expect: 16
+    - name: 13 relations hold no SELECT grant at all
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT has_table_privilege('anon', c.oid, 'SELECT')"
+      expect: 13
+    - name: session_store is the one relation with RLS enabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity"
+      expect: 1
+    - name: no policy exists, so session_store returns empty
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public'"
+      expect: 0
+    - name: support_tickets is the one relation anon may INSERT into
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'INSERT')"
+      expect: 1
+    - name: the 16 readable relations hold 153 rows between them
+      sql: "SELECT sum((xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM public.%I', c.relname), false, true, '')))[1]::text::bigint) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT') AND NOT c.relrowsecurity"
+      expect: 153
+
+  relations:
+    # NOTE THE OMISSION. Not one entry below claims read_exposed, read_status
+    # or authenticated_read_exposed. read_exposed is computed from whether rows
+    # came back, and on this target rows fail to come back for two completely
+    # different reasons -- "you have no privilege" and "you are going too
+    # fast". Asserting it would encode a coin flip as ground truth.
+    #
+    # What IS asserted here is the row count and the column list, both of
+    # which come from psql. The HTTP behaviour is in expect.checks below, with
+    # 429 in every allowed status set.
+
+    # --- readable, and worth having ---------------------------------------
+    - name: customers
+      schema: public
+      rows: 25
+      sensitive_columns: [full_name, email, phone_number, address_line]
+    - name: user_credentials
+      schema: public
+      rows: 6
+      sensitive_columns: [email, password_hash, api_key, totp_secret]
+    - name: payment_cards
+      schema: public
+      rows: 5
+      sensitive_columns: [card_number, card_expiry, iban, billing_email]
+    - name: audit_events
+      schema: public
+      rows: 40
+    - name: feature_flags
+      schema: public
+      rows: 7
+
+    # --- protected by REVOKE ----------------------------------------------
+    # The worst content in the project is here, and a scan that never reached
+    # these must not report them as absent.
+    - name: api_tokens
+      schema: public
+      rows: 4
+      sensitive_columns: [owner, token, scopes]
+    - name: employee_records
+      schema: public
+      rows: 8
+      sensitive_columns: [full_name, national_id, salary_cents, email]
+    - name: webhook_secrets
+      schema: public
+      rows: 3
+      sensitive_columns: [hook, secret]
+
+    # --- RLS on, no policy -------------------------------------------------
+    # 15 rows in the database, 0 rows over HTTP, and under a throttle "0 rows
+    # over HTTP" is also what a 429 looks like to anything counting rows.
+    - name: session_store
+      schema: public
+      rows: 15
+      sensitive_columns: [user_email, token, expires_at]
+
+    # --- filler, to show the generated half is real ------------------------
+    - name: inventory
+      schema: public
+      rows: 4
+    - name: shipments
+      schema: public
+      rows: 5
+    - name: metrics
+      schema: public
+      rows: 5
+
+    # --- the one writable relation ----------------------------------------
+    # This IS asserted over HTTP, with a real probe, because a write claim
+    # without a probe is not a claim. It is the one place in this key where
+    # the throttle could make a run flaky: a POST that gets 429 reads as "not
+    # writable" to lib/check.py, which classifies 429 as unclassified-denied.
+    #
+    # It is asserted anyway because it was measured stable across repeated
+    # verify.sh runs -- but the margin was thinner than expected and had to be
+    # engineered. lib/check.py issues 22 HTTP requests in about 4.1 seconds
+    # here, an average of 5.4 r/s, which is ABOVE the 5 r/s limit; the runs
+    # passed only because the burst queue absorbed the excess. burst was
+    # raised from 8 to 12 for that reason and no other. If this claim ever
+    # does go flaky, the honest fix is to move it to expect.unverified, not to
+    # widen the tolerance until it stops failing.
+    - name: support_tickets
+      schema: public
+      rows: 12
+      insert_reachable: true
+      update_reachable: true
+      delete_reachable: true
+      probe:
+        post_body: '{"subject":"unruly post","reporter":"post@example.invalid"}'
+        marker_sql: "INSERT INTO public.support_tickets (subject,reporter) VALUES ('unruly marker','marker@example.invalid') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"subject":"unruly-updated"}'
+        update_check_sql: "SELECT subject FROM public.support_tickets WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.support_tickets WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.support_tickets WHERE reporter IN ('marker@example.invalid','post@example.invalid')"
+
+  checks:
+    # Every one of these allows 429, because every one of them can get it.
+    # That is not laxity -- it is the strongest true statement available about
+    # a path whose answer depends on the previous 200ms.
+    - name: the OpenAPI root answers or is throttled
+      method: GET
+      path: /
+      expect_status_in: [200, 429]
+    - name: a readable relation answers or is throttled
+      method: GET
+      path: /customers?select=*&limit=1
+      expect_status_in: [200, 206, 429]
+    - name: a REVOKE-protected relation refuses or is throttled
+      method: GET
+      path: /api_tokens?select=*&limit=1
+      expect_status_in: [401, 429]
+    # The two ways to get an empty result are indistinguishable by status here
+    # only if you ignore the code: 200 means RLS returned nothing, 429 means
+    # nobody asked the database anything at all.
+    - name: the RLS-silent relation answers empty or is throttled
+      method: GET
+      path: /session_store?select=*&limit=1
+      expect_status_in: [200, 429]
+    - name: a nonexistent relation is 404 or is throttled
+      method: GET
+      path: /no_such_relation_here
+      expect_status_in: [404, 429]
+
+    # The ONE deterministic HTTP fact about this host. Requests outside the
+    # /rest/v1/ mount are served by an nginx location with no limit_req on it,
+    # so this 404 is never throttled -- and it is deliberately shaped like
+    # PostgREST's own 404, so a scanner cannot separate "wrong prefix" from
+    # "relation does not exist" by reading the body.
+    #
+    # Absolute URL, because lib/check.py prepends rest_prefix to a relative
+    # path and this check exists precisely to leave the prefix behind.
+    - name: outside the REST mount the 404 is PostgREST-shaped and never throttled
+      method: GET
+      path: http://127.0.0.1:54471/customers
+      expect_status: 404
+      expect_body_contains: "PGRST205"
+
+  unverified:
+    - claim: the 429 body is nginx's HTML error page, not JSON
+      why: >
+        Measured by hand with curl -- Content-Type text/html, 169 bytes,
+        "<title>429 Too Many Requests</title>", Server nginx/1.31.3 -- and NOT
+        asserted here, because lib/check.py issues one request at a time and
+        cannot reliably force a refusal. It is recorded because it matters: a
+        client that parses every response body as JSON gets a parse error on a
+        429 rather than a rate-limit signal, and a parse error is easy to
+        report as "the endpoint returned nothing".
+    - claim: the set of relations a scan resolves changes between identical runs
+      why: >
+        Measured with measure-scan.sh across six cold runs: the COUNT was
+        stable at 13 of 30, but the membership moved -- coupons resolved in
+        one run, shipments in two, categories in another, taxes in another,
+        session_store in five of six. This cannot be asserted by a harness
+        that checks one claim at a time, and asserting a particular set would
+        be asserting the opposite of what this target is for.
+    - claim: no measurement of how a retrying client behaves
+      why: >
+        A scanner that backs off and retries should converge on all 30
+        relations, since paced 250ms apart 29 of 30 resolve. Whether any given
+        scanner does that, and how many requests it costs, is a property of
+        the scanner; the corpus does not run scanners.

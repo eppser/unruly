@@ -1,0 +1,44 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so `13-rpc-security-definer` from two checkouts would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-13
+
+# Bare PostgREST at the ROOT, no gateway.
+#
+# The relations on this target are correctly protected and a scanner that only
+# enumerates relations reports it as clean. Everything that is wrong with it is
+# reachable through POST /rpc/<name>, so the interesting configuration is not
+# in this file at all — it is the EXECUTE grants in schema/02_routines.sql.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54522:5432"]
+    volumes:
+      # Mounted FILE BY FILE, not as a directory. The postgres entrypoint
+      # iterates /docker-entrypoint-initdb.d/* and matches on extension; a
+      # subdirectory falls through to the catch-all and is logged as
+      # "ignoring", which presents as a database with correct roles and no
+      # tables.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_tables.sql:/docker-entrypoint-initdb.d/01_tables.sql:ro
+      - ./schema/02_routines.sql:/docker-entrypoint-initdb.d/02_routines.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54521:3000"]

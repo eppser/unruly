@@ -1,0 +1,445 @@
+# Exploit lab ground truth.
+#
+# Every entry names an EXPLOIT, not a detection. The harness passes only when
+# the exploit actually succeeds — real rows retrieved, a real row written and
+# read back, a real file uploaded and fetched — because a scanner that reports
+# a finding nobody can act on is a scanner producing noise with good grammar.
+#
+# The protected half is graded just as hard. A harness that only proves
+# exploits cannot tell a precise scanner from one that flags everything.
+
+project_ref: examplelabexamplelab
+base_url: https://examplelabexamplelab.supabase.co
+created: 2026-08-15
+notes: >
+  Provisioned through the Supabase management API on the owner's own account,
+  explicitly as a testbed. It holds no real personal data: every row is
+  generated, and every address is @example.invalid.
+
+exploits:
+  - id: no-rls-read
+    technique: read
+    relation: customer_records
+    class: anonymous read
+    why: RLS was never enabled, which is the most common Supabase mistake
+    proof: SELECT returns 25 rows of names, emails and phone numbers
+    expect_rows: 25
+    scanner_finding: supabase-anon-read-exposed
+
+  - id: permissive-policy-read
+    technique: read
+    relation: api_tokens
+    class: anonymous read
+    why: RLS is ON with a policy of USING (true) — configured-looking, and open
+    proof: SELECT returns 12 live-format credentials
+    expect_rows: 12
+    scanner_finding: supabase-anon-read-exposed
+
+  - id: permissive-policy-update
+    technique: update
+    relation: api_tokens
+    marker_column: owner_email
+    class: anonymous UPDATE
+    why: >
+      the policy is FOR ALL with USING (true), which grants UPDATE and DELETE
+      alongside SELECT. This is the single most common way a table that was
+      meant to be readable becomes rewritable: FOR ALL reads like "for all
+      rows", not "for all four verbs".
+    proof: >
+      PATCH rewrites owner_email on a row and the change is read back, then the
+      original value is restored so the fixture's contents stay pinned
+    scanner_finding: supabase-anon-update-allowed
+
+  - id: no-rls-update
+    technique: update
+    relation: customer_records
+    marker_column: full_name
+    class: anonymous UPDATE
+    why: >
+      RLS was never enabled, so every verb is open, not only reads. A scanner
+      that tests INSERT alone reports this table as writable and says nothing
+      about an attacker rewriting the 25 rows already in it.
+    proof: >
+      PATCH rewrites full_name on a row and the change is read back, then the
+      original value is restored
+    scanner_finding: supabase-anon-update-allowed
+
+  - id: anonymous-write
+    technique: insert
+    relation: feedback_submissions
+    class: anonymous INSERT
+    why: a public form with WITH CHECK (true) accepts any row, including is_admin
+    proof: INSERT succeeds and the written row is read back by id
+    scanner_finding: supabase-anon-insert-allowed
+
+  # Added after both an independent test run and an audit found the scanner
+  # reporting these two at CRITICAL with nothing in this key to back them. Both
+  # are true positives, verified by hand: an anonymous INSERT of {} is rejected
+  # with 23502 rather than 42501, which only happens once the security layer
+  # has already allowed the write. The key was behind the tool.
+  - id: customer-records-writable
+    technique: insert-reachable
+    relation: customer_records
+    class: anonymous INSERT reachable
+    why: no RLS at all, so writes are unrestricted as well as reads
+    proof: POST {} returns 23502 not-null rather than 42501, and stores nothing
+    scanner_finding: supabase-anon-insert-allowed
+
+  - id: api-tokens-writable
+    technique: insert-reachable
+    relation: api_tokens
+    class: anonymous INSERT reachable
+    why: the policy is FOR ALL ... WITH CHECK (true), which permits writes too
+    proof: POST {} returns 23502 not-null rather than 42501, and stores nothing
+    scanner_finding: supabase-anon-insert-allowed
+
+  - id: feedback-readable
+    technique: read
+    relation: feedback_submissions
+    class: anonymous read
+    why: a public form with a SELECT policy of USING (true) exposes every
+      submission, including other people's
+    proof: SELECT returns the submitted rows
+    scanner_finding: supabase-anon-read-exposed
+
+  - id: realtime-delivery
+    technique: realtime
+    relation: feedback_submissions
+    class: realtime change delivery to an anonymous listener
+    why: the relation is in the supabase_realtime publication and its RLS
+      permits anon SELECT, so every future INSERT is broadcast to anyone
+      holding the public key
+    proof: a postgres_changes payload arrives carrying the row
+    scanner_finding: supabase-realtime-anon-delivery
+
+  - id: role-escalation-read
+    technique: escalate
+    relation: member_directory
+    class: authenticated-only read reachable via open signup
+    why: the policy grants SELECT TO authenticated, and signup is open, so
+      anyone can mint that role
+    proof: invisible to anon, 8 rows after signing up and re-reading
+    expect_rows: 8
+    scanner_finding: supabase-authenticated-escalation
+
+  - id: security-definer-bypass
+    technique: routine
+    routine: admin_read_audit_log
+    class: RPC privilege escalation
+    why: a SECURITY DEFINER function returns rows from a table whose RLS has no
+      policy at all, so the routine is the only way in — and anon may call it
+    proof: RPC returns 5 audit_log rows that a direct SELECT cannot reach
+    expect_rows: 5
+    # Was supabase-rpc-discoverable, which is a NAME leak. An audit pointed out
+    # that grading the exfiltration against it credited the scanner with a
+    # detection it had not made: it issued the identical request, received the
+    # five rows, discarded the body, and reported a medium. The scanner now
+    # emits supabase-rpc-returns-data at critical with the rows attached, so
+    # the key can grade impact against impact.
+    scanner_finding: supabase-rpc-returns-data
+
+  - id: public-bucket-read
+    technique: storage-read
+    bucket: public-uploads
+    object: invoice-0001.txt
+    class: unauthenticated file retrieval
+    proof: the object is fetched with no credential at all
+    scanner_finding: supabase-public-storage-bucket
+
+  # The second bucket exists to produce unruly-probe-object-left-behind,
+  # which no scan had ever emitted. It is anon-writable too, so the cross-check
+  # needs an exploit for it -- a finding at critical with nothing demonstrating
+  # it is either noise or an incomplete key, and here it was the key.
+  - id: user-bucket-write
+    technique: storage-write
+    bucket: user-uploads
+    class: unauthenticated file manipulation
+    why: >
+      a storage policy grants INSERT to anon and does NOT grant DELETE, so a
+      stranger can put files into the bucket and nobody -- including the
+      scanner that probed it -- can take them out again with the public key
+    proof: an object is uploaded as anon and read back verbatim
+    scanner_finding: supabase-storage-anon-write
+
+  - id: public-bucket-write
+    technique: storage-write
+    bucket: public-uploads
+    class: unauthenticated file manipulation
+    why: a storage policy grants INSERT to anon
+    proof: an object is uploaded as anon and read back verbatim
+    # Was supabase-public-storage-bucket, whose description is a READ claim and
+    # whose remediation (SET public = false) closes reads and leaves the INSERT
+    # policy untouched. An audit called that crediting a detection the scanner
+    # had not made. There is now a real check.
+    scanner_finding: supabase-storage-anon-write
+
+  # --- non-default schema ------------------------------------------------
+  #
+  # The scanner reports findings in every exposed schema. A cross-check that
+  # cannot REACH those relations grades them as unproven noise, which is what
+  # it did the first time one appeared: three high+ findings for
+  # reporting.metrics with nothing in this key to demonstrate them. The
+  # harness now sends Accept-Profile/Content-Profile per exploit.
+  - id: schema-metrics-read
+    technique: read
+    relation: metrics
+    schema: reporting
+    class: anonymous read in a non-default schema
+    why: >
+      PostgREST exposes reporting alongside public, and anon holds SELECT here.
+      A scanner that probes only the default schema reports nothing and nothing
+      is what a clean project looks like.
+    proof: SELECT with Accept-Profile:reporting returns rows
+    # No expect_rows: the scan WRITES to this table (anon holds INSERT), so a
+    # pinned count is stale the moment the write probe runs, and the harness
+    # correctly refuses a key it can no longer match. The read still has to
+    # return rows to pass.
+    scanner_finding: supabase-anon-read-exposed
+
+  - id: schema-metrics-insert
+    technique: insert
+    relation: metrics
+    schema: reporting
+    marker_column: label
+    class: anonymous write in a non-default schema
+    why: anon holds INSERT here, so a stranger can write rows into it
+    proof: INSERT lands and the row is read back by its marker
+    scanner_finding: supabase-anon-insert-allowed
+
+  - id: schema-metrics-realtime
+    technique: realtime
+    relation: metrics
+    schema: reporting
+    marker_column: label
+    class: realtime delivery in a non-default schema
+    why: >
+      The table is in the supabase_realtime publication. All three join
+      payloads hardcoded schema:"public", so a change here was delivered to
+      anonymous listeners while the scan never subscribed.
+    proof: a change payload for reporting.metrics arrives on an anonymous socket
+    scanner_finding: supabase-realtime-anon-delivery
+
+
+protected:
+  # Real data, correctly locked. Any finding naming these is a false positive.
+  - relation: billing_accounts
+    why: RLS on, no policy for any client role
+  - relation: internal_notes
+    why: RLS on, policy scoped to the owning user rather than to a role
+  - relation: audit_log
+    why: RLS on with no policy — reachable ONLY through the SECURITY DEFINER
+      routine above, so a direct read must stay empty
+
+app:
+  # Deployed under this name. NOT renamed with the tool: it is a Cloudflare
+  # Worker that exists at this address, and rewriting the string here does not
+  # move it. The tool-wide rename did exactly that, pointing the eval at a
+  # Worker that has never existed, and every exploitability check then reported
+  # the scanner as blind.
+  url: https://supabasemap-exploit-lab.serepp.workers.dev
+  why: >
+    A scanner is pointed at a SITE, not a database. Everything before the first
+    PostgREST request -- finding the project reference, finding the anon key,
+    harvesting the vocabulary that seeds discovery -- depends on what a real
+    front end ships to the browser, and fixtures cannot exercise that because
+    they are a database with no application in front of it.
+  ships:
+    - the anon key in client-side JavaScript, as every Supabase app does
+    - the project ref in a CSP connect-src
+    - JSON at /api/config whose keys mirror column names
+    - /admin/stats with no authorisation check, beside a public /admin/login
+
+known_limits:
+  # Found while building the lab, and worth stating rather than discovering as
+  # a mysterious zero later.
+  - id: compound-routine-names-are-out-of-reach
+    status: CLOSED 2026-08-15 — admin_read_audit_log is now discovered
+    fix: >
+      Two changes, and the first alone did nothing. wordlist.Compose joins
+      pinned verbs to harvested nouns, which produces admin_audit_log. That
+      still found nothing, because routine candidates are probed as TRIMMED
+      STEMS: the stem strategy assumes a seed is a real name that must be cut
+      to become a near miss, and a composed guess is already an approximation,
+      so cutting it pushes it past the threshold instead of onto it.
+      admin_audit_log hints; admin_audit_lo and admin_audit do not. Composed
+      guesses are now probed verbatim.
+    detail: >
+      HISTORICAL, describing the state before the fix above. At the time:
+      admin_read_audit_log was NOT discovered, and the oracle was not at fault.
+      Probing admin_read_audit_lo returns "Perhaps you meant to call the
+      function public.admin_read_audit_log", so the hint works; what is missing
+      is a seed close enough to trigger it. Measured against this project:
+
+        audit_log        no hint      admin            no hint
+        admin_read       no hint      read_audit_log   no hint
+        admin_audit_log  HINT
+
+      Only a COMPOUND of two harvested tokens clears PostgREST's similarity
+      threshold. Vocabulary harvesting produces single tokens, so a routine
+      whose name joins two of them is unreachable. Composing pairwise
+      candidates from the harvested set would close this.
+
+  - id: buckets-are-not-enumerable
+    status: CLOSED 2026-08-15 — public-uploads is now discovered by name
+    detail: >
+      GET /storage/v1/bucket returns [] for the anon role even when a public
+      bucket exists, so unruly's storage check cannot discover
+      public-uploads by listing. A public bucket is reachable only if its name
+      is known or guessed. This is a real recall gap in the scanner, not a
+      property of the lab, and the lab exists to make it visible.
+
+# pg_graphql, enabled deliberately on 2026-08-16.
+#
+# It is NOT on by default: this project and the reference target both answered
+# "pg_graphql extension is not enabled." until it was switched on here, which is
+# why the check treats disabled as the common case and stays silent for it.
+#
+# Enabled, the endpoint at /graphql/v1 serves the same rows RLS already allows,
+# so on this lab it produces supabase-graphql-anon-read at INFO -- every
+# relation it serves is readable over REST too, so it is a second door to known
+# exposure rather than new exposure. It would be medium, plus a high
+# supabase-graphql-rls-bypass per relation, only if GraphQL served something
+# REST refused.
+#
+# Introspection is refused (`Unknown field "__schema" on type Query`), so there
+# is no free schema dump; the probe asks each known relation for nodeId, which
+# every pg_graphql type carries and which decodes to
+# ["schema", "table", primary key].
+graphql:
+  enabled: true
+  introspection: disabled
+  readable_anonymously: [api_tokens, customer_records, feedback_submissions]
+  expected_finding: supabase-graphql-anon-read   # info: mirrors REST, no bypass
+
+# reporting schema, added 2026-08-16, exposed via
+# ALTER ROLE authenticator SET pgrst.db_schemas = 'public, graphql_public, reporting'.
+#
+# Deliberately ADVERSARIAL, unlike the local fixture's equivalent: the table
+# names here are not in the Worker's vocabulary and are not reachable from the
+# generic wordlist, because the hint oracle only matches near-misses of the
+# FULL name. Measured against this schema:
+#
+#   leaked_metric    -> hint names reporting.leaked_metrics
+#   leaked_metrics_x -> hint names reporting.leaked_metrics
+#   metrics          -> no hint
+#   leaked           -> no hint
+#
+# So the expected scanner behaviour here is NOT discovery. It is an honest
+# unruly-surface-not-assessed for schema:reporting, which drives exit 3 --
+# the schema is exposed, its contents are unknown, and silence would have
+# implied it was empty. The local fixture carries the reachable case, so the
+# capability itself is demonstrated there.
+reporting_schema:
+  exposed: true
+  relations:
+    leaked_metrics:  {rows: 12, anon_select: granted, discoverable_from_vocabulary: false}
+    revenue_secrets: {anon_select: revoked}
+  routines:
+    admin_rebuild_metrics: {security_definer: true, execute_granted_to: anon}
+  expected_findings: [supabase-extra-schema-exposed, unruly-surface-not-assessed]
+
+# Realtime in a non-default schema, added 2026-08-16.
+#
+# reporting.metrics is in the supabase_realtime publication, readable and
+# INSERT-able by anon, and -- unlike the rest of this schema -- named from the
+# pinned generic wordlist, so it is discoverable by construction on any project
+# rather than only where an app happens to mention it.
+#
+# The three Realtime join payloads hardcoded "schema":"public", so a table
+# anywhere else streamed every change to anonymous listeners while the scan
+# never subscribed. Measured after the fix, with a delivered payload rather
+# than an acknowledgement:
+#
+#   supabase-realtime-anon-delivery  high  reporting.metrics
+#
+# The write probe also leaves a row here that it cannot delete (INSERT granted,
+# DELETE not), which the scan reports as unruly-probe-row-left-behind.
+# That is correct behaviour, not a defect; `make lab-reset` clears it.
+#
+# RECOVERING REALTIME. Editing the publication several times left the service
+# delivering nothing at all, including for public.feedback_submissions, which
+# had been fine minutes earlier. The DROP/ADD that recovered a broken table in
+# an earlier session did NOT fix it, and removing the newly added table did not
+# either -- so it was the service, not the publication. A project restart
+# through the Management API restored it:
+#
+#   POST https://api.supabase.com/v1/projects/<ref>/restart
+#
+# after which exploitcheck went from 13/14 to 14/14 and both relations
+# delivered. Worth knowing before spending an hour on a scanner that is fine:
+# exploitcheck said "delivery is unproven, which is not the same as the
+# relation being unpublished", and it was right.
+#
+# WAIT FOR EVERY SERVICE, not just REST. The second time this recovery was
+# needed, polling /rest/v1 until it answered was not enough: storage returned
+# 500 and auth 521 for a while afterwards, so a re-run failed three checks that
+# had nothing wrong with them. Poll /auth/v1/settings AND a public storage
+# object before concluding anything.
+realtime_in_schema:
+  publication: supabase_realtime
+  published: [public.feedback_submissions, reporting.metrics]
+  expected_findings:
+    - {id: supabase-realtime-anon-delivery, resource: reporting.metrics, severity: high}
+    - {id: supabase-anon-read-exposed,      resource: reporting.metrics, severity: high}
+    - {id: supabase-anon-insert-allowed,    resource: reporting.metrics, severity: critical}
+
+# user-uploads bucket, added 2026-08-16.
+#
+# Grants anon INSERT and SELECT and NOT delete, which is the storage analogue
+# of a table that accepts anonymous writes and will not give them back. It
+# exists because unruly-probe-object-left-behind -- documented at high --
+# had never been produced by any scan of any target.
+#
+# Building it found the reason: the finding was emitted in an else-branch, so
+# it fired only when the bucket was NOT proven writable. The common case is the
+# opposite. The lab's ORIGINAL public-uploads bucket has the same policy shape,
+# so every write scan had been leaving objects there for the life of the
+# project while the canonical id never appeared; the operator was told only
+# inside the write finding's prose.
+#
+#   upload  200
+#   delete  400 {"statusCode":"403","error":"Unauthorized"}
+#
+# reset.sh now clears probe objects from BOTH buckets. It covered only
+# public-uploads, which is how a fixture quietly accumulates.
+storage_residue:
+  buckets:
+    public-uploads: {anon_insert: true, anon_delete: false, seed: invoice-0001.txt}
+    user-uploads:   {anon_insert: true, anon_delete: false, seed: user-avatar-0001.txt}
+  expected_findings:
+    - {id: unruly-probe-object-left-behind, severity: high}
+    - {id: supabase-storage-anon-write, severity: critical}
+
+# Two probe relations for the GraphQL/REST comparison, added 2026-08-16.
+#
+# supabase-graphql-rls-bypass reports a relation serving rows over pg_graphql
+# and none over REST. No scan has ever produced it, and these measure why
+# rather than leaving it assumed:
+#
+#   gql_revoked_probe   REVOKE ALL from anon
+#                       REST     401 42501
+#                       GraphQL  Unknown field -- pg_graphql builds its schema
+#                                per role from privileges, so the table is not
+#                                in it at all
+#
+#   gql_rls_probe       RLS enabled, no policy, SELECT granted to anon
+#                       REST     200 []
+#                       GraphQL  edges: []
+#
+# Against both protection mechanisms Supabase offers, GraphQL is equal or MORE
+# restrictive. The finding therefore guards a divergence that does not occur --
+# worth keeping, since it costs one query per relation and would catch a
+# regression in either engine, but "never fires" is now a measured statement.
+#
+# Neither relation produces a finding: both are correctly protected. They add
+# two names to the discovered list and nothing else.
+#
+# `make eval-graphql` compares them, with feedback_submissions as a positive
+# control -- without a relation that DOES return rows the comparison would pass
+# against a harness that sees nothing.
+graphql_equivalence:
+  probes:
+    gql_revoked_probe: {protection: revoke, rest: "401 42501", graphql: unknown_field}
+    gql_rls_probe:     {protection: rls_no_policy, rest: "200 []", graphql: "edges: []"}
+  positive_control: feedback_submissions
+  expected_findings: []

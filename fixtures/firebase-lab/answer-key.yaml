@@ -1,0 +1,196 @@
+# Firebase lab ground truth, for exploitation rather than detection.
+#
+# Provisioned by API rather than by clicking, so the posture below is known by
+# CONSTRUCTION and not by reading the console back. The rules files and the
+# full description live in FirebaseMap/lab/.
+#
+# The web API key is NOT in this file and is not a credential: Google documents
+# it as public and it ships in every client bundle. It arrives through
+# FIREBASE_LAB_API_KEY, which the Makefile reads from .secrets/. The security
+# boundary is the rules, so every entry below is a statement about a rule.
+
+project_id: firebase-lab-000000
+rtdb: https://firebase-lab-000000-default-rtdb.europe-west1.firebasedatabase.app
+notes: >
+  Synthetic data only. The two "public" collections and paths are deliberately
+  open; the rest are the precision controls, and a scanner that reports any of
+  them is producing false positives.
+
+exploits:
+  - id: firestore-public-read
+    technique: firestore-read
+    collection: public_notes
+    class: anonymous Firestore read
+    why: >
+      the rule is `allow read: if true`, which is what a project ships with
+      while somebody is still building it and what nobody revisits afterwards
+    proof: documents are listed with nothing but the public web API key
+    expect_docs: 2
+    scanner_finding: firebase-firestore-anon-read
+
+  - id: firestore-writable-read
+    technique: firestore-read
+    collection: public_writable
+    class: anonymous Firestore read
+    why: >
+      `allow read, write: if true`. The read half is demonstrated here; unruly
+      has no check for the write half yet, which is a recall gap recorded in
+      docs/exploitability.md rather than left implied
+    proof: documents are listed anonymously
+    expect_docs: 1
+    scanner_finding: firebase-firestore-anon-read
+
+  - id: rtdb-public-read
+    technique: rtdb-read
+    path: /public
+    class: anonymous Realtime Database read
+    why: >
+      `.read: true` on a subtree. RTDB rules cascade, so a rule at a node
+      grants everything beneath it -- there is no per-child override downwards
+    proof: >
+      key names are returned by ?shallow=true, which establishes the exposure
+      without retrieving anyone's values
+    expect_keys: 2
+    scanner_finding: firebase-rtdb-anon-read
+
+  - id: rtdb-writable-read
+    technique: rtdb-read
+    path: /public_writable
+    class: anonymous Realtime Database read
+    why: '`.read` and `.write` both true'
+    proof: key names returned, no values retrieved
+    expect_keys: 1
+    scanner_finding: firebase-rtdb-anon-read
+
+  - id: firestore-public-write
+    technique: firestore-write
+    collection: public_writable
+    class: anonymous Firestore write
+    why: >
+      `allow read, write: if true`. The write half is what turns disclosure
+      into control: a document a stranger can place is one the application
+      reads back and the team treats as its own data
+    proof: >
+      a document is created with nothing but the public web API key, read back
+      through a separate request -- accepted is not stored -- and removed again
+    scanner_finding: firebase-firestore-anon-write
+
+  - id: rtdb-public-write
+    technique: rtdb-write
+    path: /public_writable
+    class: anonymous Realtime Database write
+    why: >
+      `.write: true` on a subtree, which cascades to everything beneath it
+    proof: >
+      a CHILD key is written, read back and removed. Never the node itself: a
+      PUT to a node REPLACES it, so the obvious probe would delete the data it
+      was measuring
+    scanner_finding: firebase-rtdb-anon-write
+
+  - id: signup-escalation
+    technique: firestore-authenticated-read
+    collection: authed_profiles
+    class: privilege escalation through open signup
+    why: >
+      `allow read: if request.auth != null` is the most common rule in the wild
+      and it reads as secured. Where signup is open the set it admits is
+      everyone, so the rule is a formality rather than an authorisation check
+    proof: >
+      an account that did not exist seconds earlier reads documents an
+      anonymous caller is refused. The account deletes itself afterwards with
+      its own idToken, which is the same fact the scanner's -no-residue path
+      relies on
+    expect_docs: 2
+    scanner_finding: firebase-firestore-authenticated-read
+
+  - id: remote-config-secret
+    technique: remote-config-fetch
+    class: credential in a client-fetchable template
+    why: >
+      Remote Config answers anyone holding the web API key by design, so
+      fetchability is not the finding -- reporting it would be reporting a
+      feature. People put Stripe keys and internal endpoints there precisely
+      because it looks like configuration rather than like a database
+    proof: >
+      the template is retrieved with the public web API key and the value that
+      is a credential is recognised while the three that are ordinary
+      configuration are not. No value is ever quoted: recognising a credential
+      and then printing it would republish the thing being reported
+    must_recognise:
+      - stripe_secret_key
+    must_ignore:
+      - feature_new_dashboard
+      - max_items_per_page
+      - welcome_headline
+    # internal_admin_endpoint is in neither list on purpose. It is worth
+    # reporting and it is NOT credential material, so the scanner rates it low
+    # by a different rule; requiring this technique to recognise it would be
+    # asking one classifier to answer another one's question.
+    scanner_finding: firebase-remote-config-secret
+
+  - id: storage-anon-list
+    technique: storage-list
+    bucket: unruly-lab-fixture-505809
+    class: anonymous Cloud Storage listing
+    why: >
+      the storage rules grant `allow list: if true`, which is what a project
+      ships with while somebody is still wiring uploads and what nobody
+      revisits. The names are the exposure: each one is a URL
+    proof: >
+      object names are listed to a caller carrying no credential at all -- not
+      even the public web API key, which this host does not take
+    expect_docs: 2
+    scanner_finding: firebase-storage-anon-read
+
+  - id: function-public-invoke
+    technique: function-invoke
+    function: publicEcho
+    class: anonymous Cloud Function invocation
+    why: >
+      the function is deployed with invoker "public", which binds allUsers on
+      the underlying Cloud Run service. Nothing about the rules files is
+      involved: this is IAM, and a project whose Firestore rules are perfect
+      can still ship a function anybody on the internet can run
+    proof: >
+      the function answers a caller carrying no credential of any kind and
+      returns its own output, which a reachable-but-refusing endpoint cannot
+    scanner_finding: firebase-function-public
+
+protected:
+  # The half most Firebase tools skip. A scanner that reports any of these is
+  # producing false positives, and precision is the harder claim.
+  #
+  # Existence is asserted HERE rather than measured: Firestore answers 403
+  # identically for a protected collection and one that does not exist, so a
+  # refusal only means something when a document independently says the thing
+  # is there. That is also why the scanner never claims "protected" about a
+  # Firestore collection.
+  - collection: authed_profiles
+    why: >
+      read if request.auth != null -- closed to anonymous callers, and open to
+      anyone who signs up. Reporting it as protected would be wrong in the
+      other direction, which is what the escalation check exists to catch
+  - collection: owner_docs
+    closed_to_signup: true
+    why: read scoped to the owning uid, which a fresh account does not satisfy
+  - collection: locked_secrets
+    closed_to_signup: true
+    why: read and write both if false
+  - path: /authed
+    why: '.read is "auth != null"'
+  - path: /locked
+    closed_to_signup: true
+    why: '.read is false'
+  - path: /
+    closed_to_signup: true
+    why: >
+      the root denies, which is what makes the open subtrees a finding about
+      those subtrees rather than about the database
+
+  - function: privateControl
+    closed_to_signup: true
+    why: >
+      identical to publicEcho except that its invoker binding excludes
+      allUsers, so it answers 403. It is the precision control for the
+      function check: a scanner that reports every deployed function passes on
+      publicEcho and fails here

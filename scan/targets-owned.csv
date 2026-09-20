@@ -1,0 +1,7 @@
+url,domain,provider,region,title,html_bytes,js_bytes
+# Add ONLY sites you own or hold written permission to test, one row per site.
+# Same column layout as supabase-prospects/mixed_10000.csv; only `url` is read
+# by scripts/scan-batch.py, the rest is metadata for the research dataset.
+# Lines starting with # are ignored.
+# Example:
+# https://app.mycompany.com/,app.mycompany.com,custom,eu,My App,0,0

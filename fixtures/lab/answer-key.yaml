@@ -1,0 +1,262 @@
+# Local lab ground truth, for exploitation rather than detection.
+#
+# The cloud exploit lab answers the same question against a real Supabase
+# project, and it needs a secret CI does not have -- so the cross-check that
+# decides whether our findings are ACTIONABLE ran only where that secret was
+# present. Everything else in this repository is graded offline; the one claim
+# that distinguishes us from a checklist scanner was not.
+#
+# This key exploits the local fixture through its gateway, which mounts
+# PostgREST, GoTrue and storage exactly where the managed product does. Same
+# harness, same techniques, no credentials.
+#
+# It does NOT replace the cloud key. A fixture can only be wrong in the ways
+# somebody thought to build; the cloud project catches the ways the product
+# actually behaves. Both run.
+
+project_ref: fixture-lab
+base_url: http://127.0.0.1:54327
+notes: >
+  Docker fixture, seeded by fixtures/lab/schema. Every address is
+  @example.invalid and every value is generated. Write techniques mutate it,
+  which is why make fixtures-reset exists and runs around the graded evals.
+
+exploits:
+  - id: no-rls-read
+    technique: read
+    relation: open_no_rls
+    class: anonymous read
+    why: RLS was never enabled, which is the most common Supabase mistake
+    proof: SELECT returns 12 rows to a caller holding only the anon key
+    expect_rows: 12
+    scanner_finding: supabase-anon-read-exposed
+
+  - id: credentials-read
+    technique: read
+    relation: leaky_credentials
+    class: anonymous read
+    why: >
+      the table holds api_key and password_hash columns and is readable, which
+      is the case severity has to rate critical rather than high -- the data is
+      itself a credential, so the read is also an escalation
+    proof: SELECT returns 4 rows carrying API keys
+    expect_rows: 4
+    scanner_finding: supabase-anon-read-exposed
+
+  - id: tokens-read
+    technique: read
+    relation: tokens
+    class: anonymous read
+    why: >
+      granted explicitly after the schema-wide GRANT had already run, which is
+      how a table added later ends up open while the others look deliberate
+    proof: SELECT returns 6 rows including confirmation tokens
+    expect_rows: 6
+    scanner_finding: supabase-anon-read-exposed
+
+  - id: no-rls-update
+    technique: update
+    relation: verb_update_open
+    marker_column: note
+    class: anonymous UPDATE
+    why: >
+      the policy is FOR ALL with USING (true), which grants UPDATE alongside
+      SELECT. A scanner that probes INSERT alone calls this table writable and
+      never says the existing rows can be rewritten
+    proof: >
+      PATCH rewrites note on a row and the change is read back, then the
+      original value is restored
+    scanner_finding: supabase-anon-update-allowed
+
+  - id: defaults-insert
+    technique: insert
+    relation: all_defaults_insertable
+    marker_column: note
+    class: anonymous INSERT
+    why: >
+      every column has a default, so an empty INSERT succeeds -- the shape that
+      makes a table writable without anyone noticing it takes input at all
+    proof: a row is inserted and read back by its marker
+    scanner_finding: supabase-anon-insert-allowed
+
+  - id: write-only-insert
+    technique: insert-reachable
+    relation: insert_no_select
+    marker_column: note
+    class: anonymous INSERT, no read back
+    why: >
+      INSERT is granted and SELECT is not, so the row cannot be read back and
+      the write is still real. Proving it means reading the error rather than
+      the row: 42501 is a refusal, a constraint violation is admission
+    proof: the INSERT is admitted by the security layer
+    scanner_finding: supabase-anon-insert-allowed
+
+  - id: definer-routine
+    technique: routine
+    routine: rebuild_daily_revenue
+    schema: reporting
+    class: SECURITY DEFINER routine returning rows
+    why: >
+      the routine runs as its owner and returns rows from revenue_secrets, a
+      table the anonymous role holds no privilege on at all. Both direct
+      signals say protected -- a 42501 on the table, nothing in OpenAPI -- and
+      the data is one RPC call away. public_stats_summary is deliberately NOT
+      used here: it returns a scalar, and a count is not the finding
+    proof: the call returns the row an anonymous SELECT is refused
+    expect_rows: 1
+    scanner_finding: supabase-rpc-returns-data
+
+  - id: signup-escalation
+    technique: escalate
+    relation: authenticated_only
+    class: privilege escalation through open signup
+    why: >
+      the policy admits the authenticated role, and signup is open, so the set
+      it admits is everyone willing to type an address
+    proof: a fresh account reads 6 rows that anonymous callers cannot see
+    expect_rows: 6
+    scanner_finding: supabase-authenticated-escalation
+
+  - id: public-bucket-read
+    technique: storage-read
+    bucket: public-uploads
+    object: customer-export.csv
+    class: public storage bucket
+    why: the bucket serves objects by URL with no authentication
+    proof: the object is fetched with no credential
+    scanner_finding: supabase-public-storage-bucket
+
+  - id: delete-open
+    technique: delete
+    relation: verb_delete_open
+    marker_column: label
+    class: anonymous DELETE
+    why: >
+      SELECT, INSERT and DELETE are granted to anon and UPDATE is not, which is
+      the combination that makes the verb provable at all: the row removed is
+      one this harness created seconds earlier, never the fixture's
+    proof: >
+      a row is created, read back so its absence later means something, deleted,
+      and confirmed gone. A zero-match DELETE returns 204 whether or not the
+      caller may delete anything, so the confirming read is the whole test
+    scanner_finding: supabase-anon-delete-allowed
+
+  - id: arbitrary-sql
+    technique: arbitrary-sql
+    routine: exec_sql
+    argument: query
+    class: caller-supplied SQL executed
+    why: >
+      the routine is SECURITY DEFINER and EXECUTE is granted to anon, so it runs
+      statements as its owner. This is the only route from an anon key to DDL --
+      PostgREST exposes no endpoint for DROP -- which makes it the answer to
+      "can a stranger drop my database"
+    proof: >
+      SELECT 6*7 sent over GET, which PostgREST runs in a read-only transaction,
+      returns 42. A routine that stores or echoes its argument returns the text
+      instead. No DDL is ever sent
+    scanner_finding: supabase-anon-arbitrary-sql
+
+  - id: leaked-service-key
+    technique: leaked-key
+    relation: protected_rls_no_policy
+    class: service_role key served to browsers
+    why: >
+      the page a browser loads carries a service_role credential, which bypasses
+      row-level security entirely. Every other entry here starts from the anon
+      key an operator handed over; this one starts from nothing
+    proof: >
+      the key is taken out of the page and used to read a relation the anonymous
+      key is refused, so the credential is shown to OPEN something rather than
+      merely to claim a role in its payload
+    scanner_finding: supabase-service-key-exposed
+
+  - id: archived-service-key
+    technique: leaked-key
+    app_url: http://127.0.0.1:54325/a-service.js
+    relation: protected_rls_no_policy
+    class: service_role key in a public archive
+    why: >
+      a key removed from today's bundle is still in yesterday's, and web
+      archives keep yesterday's forever. The credential is not less valid for
+      having been taken down
+    proof: >
+      the key is read out of the archived bundle and opens a relation the
+      anonymous key is refused
+    scanner_finding: supabase-historic-service-key-exposed
+
+  - id: archived-key-not-rotated
+    technique: key-still-authenticates
+    app_url: http://127.0.0.1:54325/b-current.js
+    relation: open_no_rls
+    class: archived credential never rotated
+    why: >
+      removing a key from the bundle looks like remediation and is not one.
+      Until it is rotated, every copy that was ever published still works
+    proof: >
+      the archived credential still authenticates today. The relation read is
+      one the anonymous role can already reach, deliberately: the question is
+      whether the KEY is live, and a rotated one is refused by the gateway
+      before any policy is consulted
+    scanner_finding: supabase-historic-key-not-rotated
+
+  - id: unauthenticated-admin-route
+    technique: route
+    route: /api/admin/users
+    class: application route with no authorisation
+    why: >
+      two sibling routes under the same prefix refuse anonymous callers and
+      this one does not, which is the signal: a route family is either public
+      by design or protected, not both. Routes in this position usually run
+      with a key that bypasses row-level security, so no policy elsewhere in
+      the report applies to them
+    proof: >
+      the route returns data to a caller holding no credential of any kind,
+      while /api/admin/logs and /api/admin/settings answer 401
+    scanner_finding: app-route-auth-inconsistency
+
+  # No storage-write entry. The gateway answers a public read with a fixed
+  # body, so an uploaded object cannot be fetched back byte for byte -- and
+  # byte for byte is the whole distinction between a bucket that ACCEPTED an
+  # upload and one that STORED it. A fixture that returned 200 to both would
+  # grade the harness rather than the target. supabase-storage-anon-write stays
+  # proven by the cloud lab, where the storage service is real.
+
+  - id: edge-function-no-jwt
+    technique: edge-function
+    origin: http://127.0.0.1:54351
+    function: send-invoice
+    class: Edge Function running without a token
+    why: >
+      Supabase functions are deployed with JWT verification ON by default and
+      people turn it off to make a webhook work, then leave it off. The name is
+      what raises this one: send-invoice implies it acts rather than reports
+    proof: >
+      the function answers a caller presenting no credential at all, and the
+      same origin answers 404 to a name that cannot exist -- so this is the
+      function running rather than the host answering everything
+    scanner_finding: supabase-edge-function-no-jwt
+
+protected:
+  # Correctly closed. Any finding naming these is a false positive, and a
+  # harness that only proves exploits cannot tell a precise scanner from one
+  # that flags everything.
+  - relation: protected_rls_no_policy
+    why: RLS on with no policy, which is the correct default
+  - relation: owner_scoped
+    why: RLS on with a policy scoped to the owning user rather than to a role
+  - relation: view_base
+    why: >
+      RLS on with no policy. Its rows are still reachable through the view that
+      selects from it, which is a finding about the VIEW and must not be
+      reported against this table
+  - relation: zq9f_x4tm7
+    why: >
+      no grant to anon at all, so PostgREST refuses before RLS is consulted.
+      Reachable only by name, which is why it exists
+  - relation: revenue_secrets
+    schema: reporting
+    why: no grant to anon in a schema that is otherwise exposed
+
+app:
+  url: http://127.0.0.1:54322

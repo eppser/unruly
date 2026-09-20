@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Refuse a commit that would publish something private.
+#
+# .gitignore prevents accidents. It does not prevent `git add -f`, a deleted
+# ignore line, or a file that was tracked before it became sensitive. This is
+# the check that survives all three, because it reads the STAGED CONTENT rather
+# than the filenames.
+#
+# Install once:  git config core.hooksPath .githooks
+set -uo pipefail
+fail=0
+say() { echo "pre-commit: $*" >&2; fail=1; }
+
+# Nothing under the ignored directory may ever be staged, even with -f.
+if git diff --cached --name-only | grep -q '^private/'; then
+  say "a file under private/ is staged; that directory is not published"
+fi
+
+# Credential shapes, content-based. Tests are exempt for the two patterns that
+# legitimately need a realistic-looking string to prove redaction works.
+if git diff --cached -- . ':!*_test.go' ':!docs/*' | grep -qE '^\+.*eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.'; then
+  say "a JWT-shaped string is being committed"
+fi
+if git diff --cached -- . ':!*_test.go' | grep -qE '^\+.*sb_secret_[A-Za-z0-9_-]{8,}'; then
+  say "a Supabase secret key is being committed"
+fi
+if git diff --cached | grep -qE '^\+.*(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{20,})'; then
+  say "a private key or provider API key is being committed"
+fi
+
+# Real identifiers: a live Supabase project ref is 20 lower-case letters on a
+# .supabase.co host. Placeholders used in fixtures are allowed by name.
+# Placeholders are allowed by SHAPE, not by a list that has to be maintained:
+# an `example`-prefixed ref, the sequential alphabet, or any single letter
+# repeated. A real project reference is none of those. This list grew by one
+# entry the first time the hook ran for real, which is the right direction --
+# the hook refused a legitimate commit rather than waving through a real ref.
+refs=$(git diff --cached | grep -oE '^\+.*\b[a-z]{20}\.supabase\.co' \
+        | grep -oE '[a-z]{20}' | sort -u \
+        | grep -vE '^example' \
+        | grep -vE '^abcdefghijklmnopqrst$' \
+        | grep -vE '^(a{20}|b{20}|c{20}|x{20}|z{20})$' || true)
+if [ -n "$refs" ]; then
+  say "a real-looking Supabase project reference is being committed: $refs"
+fi
+
+# Absolute paths from this machine.
+if git diff --cached | grep -qE '^\+.*/Users/[a-z]+/'; then
+  say "an absolute home path is being committed"
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-commit: refusing. Override deliberately with --no-verify." >&2
+  exit 1
+fi

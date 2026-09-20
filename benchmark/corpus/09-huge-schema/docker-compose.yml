@@ -1,0 +1,45 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so two checkouts of `09-huge-schema` would share containers
+# and volumes and each would see the other's database.
+name: unruly-bench-09
+
+# Bare PostgREST at the root, same layout as project 01, so that the ONLY
+# difference between the two targets is the size of the schema and the
+# availability of the OpenAPI document. Anything a scanner does worse here it
+# does worse because of scale or naming, not because of the URL shape.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54482:5432"]
+    volumes:
+      # File by file, not as a directory: the postgres entrypoint iterates
+      # /docker-entrypoint-initdb.d/* and logs a subdirectory as "ignoring",
+      # which presents as correct roles and zero tables.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      # The point of this project. Project 01 leaves the OpenAPI document on
+      # and records that it makes discovery nearly free; here the cheap path is
+      # closed and enumeration has to be real. The answer key asserts the
+      # status this actually produces, which was MEASURED and is not what the
+      # obvious guess would be -- see the README.
+      PGRST_OPENAPI_MODE: disabled
+    ports: ["54481:3000"]

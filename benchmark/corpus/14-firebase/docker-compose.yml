@@ -1,0 +1,59 @@
+name: unruly-bench-14
+
+# The Firebase emulator suite, so the corpus is not entirely Postgres-shaped.
+#
+# The scanner supports Firebase as a backend and every other project here is a
+# PostgREST target, which means Firebase recall was measurable only against a
+# real Google project. The emulator serves the SAME REST surface a live project
+# does -- /v1/projects/<id>/databases/(default)/documents for Firestore, and
+# <path>.json for the Realtime Database -- so probes written for the cloud work
+# unchanged against localhost.
+#
+# andreysenov/firebase-tools carries firebase-tools 15.27.0 and a JRE, which
+# the Firestore and Database emulators both need. Pinned by digest is better
+# practice; it is pinned by tag here and the measured version is recorded in
+# the README so a future run that behaves differently can be traced to it.
+services:
+  emulators:
+    image: andreysenov/firebase-tools:latest
+    # Runs as root, which a fixture may and a deployment may not.
+    #
+    # The image's default user is `node` (uid 1000) and the working directory
+    # is created by Docker as root:root because every file in it is a read-only
+    # bind mount. firebase-tools then tries to write firestore-debug.log and
+    # database-debug.log into it, fails, and reports exactly "Error: An
+    # unexpected error has occurred." with no mention of a path or a
+    # permission. Forty-five seconds of a healthy-looking container and one
+    # useless line of log; worth recording so nobody spends that time twice.
+    user: "0:0"
+    working_dir: /home/node/project
+    command: >
+      firebase emulators:start
+      --project unruly-bench-14
+      --only firestore,database,auth
+    volumes:
+      - ./firebase.json:/home/node/project/firebase.json:ro
+      - ./firestore.rules:/home/node/project/firestore.rules:ro
+      - ./database.rules.json:/home/node/project/database.rules.json:ro
+      - ./.firebaserc:/home/node/project/.firebaserc:ro
+    ports:
+      - "54531:8080"   # Firestore
+      - "54532:9000"   # Realtime Database
+      - "54533:9099"   # Auth (Identity Toolkit)
+      # The emulator hub, on 54535 rather than the 54534 it started on: after a
+      # container that failed to boot was force-removed, the daemon kept the
+      # 54534 forward reserved -- nothing was listening on it on the host or
+      # inside the colima VM, and every subsequent bind failed with "address
+      # already in use". Moving the port was cheaper than restarting a daemon
+      # with four other people's stacks on it.
+      - "54535:4400"   # Emulator hub
+    healthcheck:
+      # The hub answers as soon as the suite is up. Firestore's own port
+      # answers earlier than its rules are loaded, so waiting on 8080 gives a
+      # window in which every read succeeds regardless of rules -- which would
+      # make the answer key wrong in the most convincing possible way.
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:4400/emulators || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 20s

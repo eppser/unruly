@@ -1,0 +1,277 @@
+# Ground truth for corpus project 14: Firebase, not Postgres.
+#
+# Every status code and body fragment below was measured against the running
+# emulator suite with curl before it was written down. Where the emulator is
+# known to differ from a live Google project, the difference is recorded under
+# expect.unverified rather than glossed over -- a fixture that quietly diverges
+# from production is worse than no fixture, because it produces confident
+# numbers about a thing nobody deployed.
+
+name: 14-firebase
+backend: firebase
+project_ref: unruly-bench-14
+base_url: http://127.0.0.1:54531
+# Firestore's REST surface is the same shape on the emulator as on
+# firestore.googleapis.com, so a probe written for the cloud works unchanged.
+rest_prefix: "/v1/projects/unruly-bench-14/databases/(default)/documents/"
+fixture: true
+compose: docker-compose.yml
+# No anon_key_env: Firebase has no anon JWT to present. Requests below are
+# genuinely unauthenticated unless a check sets Authorization itself.
+
+notes: >
+  Firestore and the Realtime Database are two different rule languages in one
+  project, and they disagree about defaults in opposite directions. Firestore
+  denies any collection with no matching rule; RTDB grants a whole subtree from
+  one .read at an ancestor and cannot take it back deeper down. Both behaviours
+  are asserted below against the running emulator, because both are routinely
+  described the other way round.
+
+expect:
+  key_in_bundles: false
+
+  # Measured against the running emulator on 2026-08-22, by asking for each
+  # name unauthenticated and counting what came back. Not derived from the
+  # rules files and not copied from the checks below: the checks assert status
+  # codes, and a grader needs the recall denominator, so these were counted.
+  #
+  # relations, because that is the grader's vocabulary. A Firestore collection
+  # and an RTDB path are the same thing for scoring: a name the scan either
+  # recovered or missed, and either read or stayed silent about.
+  #
+  # NOT YET SCORED, and the reason is no longer the one RESULTS.md used to
+  # give. cmd/benchmark invokes the scanner with -base-url and no -s, and
+  # Firebase is detected from a bundle declaring firebaseConfig -- projectId,
+  # apiKey, databaseURL. This project serves no such bundle, so the scan finds
+  # nothing to detect and would grade zero. Closing that means adding a static
+  # site to docker-compose.yml carrying the config, exactly as a real
+  # application ships it, and setting site: here.
+  relations:
+    - name: user_profiles
+      rows: 5                    # HTTP 200, 5 documents
+      read_exposed: true
+      insert_reachable: true     # POST ?documentId=anon_probe answered 200
+      sensitive_columns: [email, phone, password_hash]
+    - name: public_announcements
+      rows: 3                    # HTTP 200, 3 documents; readable by design
+      read_exposed: true
+    - name: billing_secrets      # HTTP 403
+    - name: employee_records     # HTTP 403
+    - name: ghost_collection     # HTTP 403 -- no rule at all, denied by default
+    - name: public_config
+      rows: 3                    # RTDB, HTTP 200, 3 keys
+      read_exposed: true
+    - name: open_chat
+      rows: 2                    # RTDB, HTTP 200, 2 keys
+      read_exposed: true
+      insert_reachable: true
+    - name: open_chat/private_dm
+      rows: 1                    # HTTP 200 DESPITE its own .read false: a
+      read_exposed: true         # .read at the ancestor grants the subtree and
+                                 # a child cannot take it back. Measured, and
+                                 # the reason this project is in the corpus.
+    - name: admin_tokens         # RTDB, HTTP 401
+
+  checks:
+    # ---------------------------------------------------------------- Firestore
+    # "Test mode" left on: read and write both true. 5 documents carrying
+    # emails, phone numbers and bcrypt hashes.
+    - name: firestore user_profiles is anonymously readable
+      method: GET
+      path: user_profiles
+      expect_status: 200
+      expect_body_contains: "dana@example.invalid"
+
+    - name: firestore user_profiles leaks password hashes
+      method: GET
+      path: user_profiles
+      expect_status: 200
+      expect_body_contains: "$2b$12$"
+
+    # Anonymous create, then anonymous delete of the same document. The pair
+    # both proves the write and restores the collection to its 5 seeded docs.
+    - name: firestore user_profiles accepts an anonymous create
+      method: POST
+      path: "user_profiles?documentId=anon_probe"
+      headers:
+        Content-Type: application/json
+      body: '{"fields":{"email":{"stringValue":"anon-probe@example.invalid"}}}'
+      expect_status: 200
+      expect_body_contains: "anon_probe"
+
+    - name: firestore user_profiles accepts an anonymous delete
+      method: DELETE
+      path: user_profiles/anon_probe
+      expect_status: 200
+
+    # Correct configuration. Readable by design, and reporting it is a false
+    # positive: it is a marketing feed.
+    - name: firestore public_announcements is readable by design
+      method: GET
+      path: public_announcements
+      expect_status: 200
+      expect_body_contains: "Bench Chat 2.4 is out"
+
+    - name: firestore public_announcements refuses anonymous writes
+      method: POST
+      path: "public_announcements?documentId=anon_probe"
+      headers:
+        Content-Type: application/json
+      body: '{"fields":{"title":{"stringValue":"x"}}}'
+      expect_status: 403
+      expect_body_contains: "PERMISSION_DENIED"
+
+    # Locked in both directions, and holding the worst content in the project.
+    - name: firestore billing_secrets is denied
+      method: GET
+      path: billing_secrets
+      expect_status: 403
+      expect_body_missing: "sk_test_"
+
+    # A collection with NO matching rule. Firestore's default is DENY, which is
+    # the opposite of a Postgres table with RLS disabled and a GRANT. The error
+    # text differs from an explicit `false` rule, which is itself a small
+    # existence oracle -- see the unverified section for how that behaves in
+    # production.
+    - name: firestore denies a collection that has no rule at all
+      method: GET
+      path: ghost_collection
+      expect_status: 403
+      expect_body_contains: "No matching allow statements"
+
+    # ------------------------------------------------------- the escalation
+    # Anonymous sign-in is enabled, so "signed in" costs one unauthenticated
+    # HTTP request. These three checks measure the whole path: get a token,
+    # read with it, and confirm the same read fails without it.
+    - name: employee_records is invisible without a token
+      method: GET
+      path: employee_records
+      expect_status: 403
+      expect_body_missing: "salary_usd"
+
+    - name: anonymous sign-in issues an ID token to a stranger
+      method: POST
+      path: "http://127.0.0.1:54533/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key"
+      headers:
+        Content-Type: application/json
+      body: '{"returnSecureToken":true}'
+      expect_status: 200
+      capture:
+        name: idToken
+        json_key: idToken
+
+    - name: that token reads every employee salary and home address
+      method: GET
+      path: employee_records
+      headers:
+        Authorization: "Bearer ${idToken}"
+      expect_status: 200
+      expect_body_contains: "142000"
+
+    # The precision control. private_notes is owner-scoped, so the same freshly
+    # minted anonymous token gains nothing. A scanner that reports every
+    # authenticated-visible collection as an escalation is wrong about this one.
+    - name: the same token gains nothing on the owner-scoped collection
+      method: GET
+      path: private_notes
+      headers:
+        Authorization: "Bearer ${idToken}"
+      expect_status: 403
+      expect_body_missing: "renewal call thursday"
+
+    - name: and gains nothing on the locked one either
+      method: GET
+      path: billing_secrets
+      headers:
+        Authorization: "Bearer ${idToken}"
+      expect_status: 403
+      expect_body_missing: "sk_test_"
+
+    # --------------------------------------------------- Realtime Database
+    - name: rtdb public_config is readable by design
+      method: GET
+      path: "http://127.0.0.1:54532/public_config.json?ns=unruly-bench-14-default-rtdb"
+      expect_status: 200
+      expect_body_contains: "Bench Chat"
+
+    - name: rtdb admin_tokens is denied
+      method: GET
+      path: "http://127.0.0.1:54532/admin_tokens.json?ns=unruly-bench-14-default-rtdb"
+      expect_status: 401
+      expect_body_missing: "sk_live_admin"
+
+    - name: rtdb root is denied
+      method: GET
+      path: "http://127.0.0.1:54532/.json?ns=unruly-bench-14-default-rtdb"
+      expect_status: 401
+      expect_body_contains: "Permission denied"
+
+    # The cascade. open_chat/private_dm carries ".read": false and is readable
+    # anyway, because the parent's ".read": true already granted the subtree
+    # and RTDB rules cannot revoke deeper down. This is the single most
+    # commonly misread thing about the language, and it is measured here rather
+    # than asserted from the docs.
+    - name: rtdb open_chat is readable
+      method: GET
+      path: "http://127.0.0.1:54532/open_chat.json?ns=unruly-bench-14-default-rtdb"
+      expect_status: 200
+      expect_body_contains: "standup in 5"
+
+    - name: rtdb private_dm is readable DESPITE its own .read false
+      method: GET
+      path: "http://127.0.0.1:54532/open_chat/private_dm.json?ns=unruly-bench-14-default-rtdb"
+      expect_status: 200
+      expect_body_contains: "hunter2-not-real"
+
+    - name: rtdb open_chat accepts an anonymous write
+      method: PUT
+      path: "http://127.0.0.1:54532/open_chat/lobby/anon_probe.json?ns=unruly-bench-14-default-rtdb"
+      body: '{"from":"anon@example.invalid","text":"probe"}'
+      expect_status: 200
+
+    - name: rtdb open_chat accepts an anonymous delete of what was just written
+      method: DELETE
+      path: "http://127.0.0.1:54532/open_chat/lobby/anon_probe.json?ns=unruly-bench-14-default-rtdb"
+      expect_status: 200
+
+    - name: rtdb admin_tokens refuses an anonymous write
+      method: PUT
+      path: "http://127.0.0.1:54532/admin_tokens/anon_probe.json?ns=unruly-bench-14-default-rtdb"
+      body: '{"token":"x"}'
+      expect_status: 401
+
+    # The emulator INVENTS a namespace on demand, with default rules of
+    # read/write true, so probing the wrong ns finds a wide-open database that
+    # does not exist. Asserted so that anyone reading a Firebase result from
+    # this target checks the namespace first. See README.
+    - name: an invented rtdb namespace answers 200 and is empty
+      method: GET
+      path: "http://127.0.0.1:54532/admin_tokens.json?ns=namespace-that-never-existed"
+      expect_status: 200
+      expect_body_missing: "sk_live_admin"
+
+  unverified:
+    - claim: >
+        Firestore's 403 bodies name the failing rule LINE, e.g.
+        "false for 'list' @ L30", and distinguish an explicit deny from a
+        collection with no matching rule ("No matching allow statements").
+      why: >
+        Measured on emulator firebase-tools 15.27.0 and asserted above, but a
+        live Google project returns a generic PERMISSION_DENIED without a line
+        number. The line-number text is an EMULATOR artefact. A scanner tuned
+        to it would work here and find nothing in production. Not verified
+        against a real project, because the corpus authorises only targets we
+        own and nobody should stand up a Google project to check a message
+        string.
+    - claim: The Realtime Database enforces rules identically on the emulator and in production.
+      why: >
+        The cascade behaviour asserted above is documented Firebase semantics
+        and was measured here, but the emulator's HTTP status for a refusal is
+        401 where production returns 401 too for REST; the body wording has not
+        been compared against a live database.
+    - claim: Anonymous sign-in is enabled in the same way a production project enables it.
+      why: >
+        The auth emulator accepts accounts:signUp with no email and no API key
+        validation. A production project requires the Anonymous provider to be
+        switched on and a real API key. The escalation this project measures is
+        therefore real in shape and cheaper here than in production.

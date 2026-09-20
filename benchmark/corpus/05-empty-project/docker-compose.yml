@@ -1,0 +1,43 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so `05-empty-project` from two checkouts would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-05
+
+# Bare PostgREST at the ROOT, the self-hosted layout, exactly as project 01.
+# Everything about this stack is ordinary except that PGRST_DB_SCHEMAS points
+# at a schema with no relations in it.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54442:5432"]
+    volumes:
+      # Mounted FILE BY FILE, not as a directory: the postgres entrypoint
+      # ignores subdirectories of /docker-entrypoint-initdb.d, which presents
+      # as a database with correct roles and no tables -- indistinguishable
+      # from what this project is deliberately building, so the mistake would
+      # be invisible here of all places.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      # `public` only. The schema `internal` exists in the same database with
+      # three populated tables and generous grants; this one line is the whole
+      # reason it is unreachable.
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54441:3000"]

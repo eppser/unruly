@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unruly.sh/schema/unruly-agent-v1.schema.json",
+  "title": "Unruly agent record v1",
+  "description": "One line of the compact, deterministic, sample-free agent JSONL stream.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "type", "fingerprint", "id", "severity", "protocol", "target"],
+  "properties": {
+    "schema": {"const": "unruly.agent/v1"},
+    "type": {"enum": ["finding", "coverage"]},
+    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$"},
+    "severity": {"enum": ["info", "low", "medium", "high", "critical"]},
+    "protocol": {"type": "string", "minLength": 1},
+    "target": {"type": "string"},
+    "resource": {"type": "string"},
+    "fix_kind": {"enum": ["sql", "rules-file", "console", "rotate-credential", "none"]},
+    "observed": {"$ref": "#/$defs/observed"},
+    "replay": {"$ref": "#/$defs/replay"}
+  },
+  "$defs": {
+    "observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "integer", "minimum": 0, "maximum": 599},
+        "rows": {"type": "integer", "minimum": 0},
+        "classes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "reason": {"type": "string", "maxLength": 320}
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "performed"],
+      "properties": {
+        "command": {"type": "string"},
+        "performed": {"type": "boolean"}
+      }
+    }
+  }
+}

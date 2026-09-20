@@ -1,0 +1,51 @@
+rules_version = '2';
+
+// Firestore security rules for corpus project 14.
+//
+// Five collections, five postures. Firebase's model is not Postgres's: there
+// are no GRANTs and no roles, only a rules program evaluated per document, and
+// a collection with no matching rule is DENIED rather than open. That
+// inversion is why this project exists — a scanner that ports its Supabase
+// reasoning across gets the default backwards.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // "Test mode", left on. The Firebase console creates this rule for you and
+    // warns that it expires in 30 days; projects routinely change the date and
+    // keep the rule. Anyone can read every document and write any document.
+    match /user_profiles/{doc} {
+      allow read, write: if true;
+    }
+
+    // Read-only public content. This is CORRECT configuration, not a finding:
+    // a marketing site's announcements are meant to be world-readable. A
+    // scanner that reports this is producing noise.
+    match /public_announcements/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Locked in both directions.
+    match /billing_secrets/{doc} {
+      allow read, write: if false;
+    }
+
+    // Readable by ANY signed-in user. With anonymous auth enabled on the
+    // emulator's auth service, "signed in" costs one unauthenticated HTTP
+    // request, so this is public with extra steps.
+    match /employee_records/{doc} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Correctly owner-scoped: the precision control for the escalation axis.
+    // Signing in gains an attacker nothing here unless they are the owner.
+    match /private_notes/{doc} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == resource.data.owner_uid;
+    }
+
+    // No catch-all. Any collection not named above is denied, which is
+    // Firestore's default and the opposite of Postgres's, where a table with
+    // RLS disabled and a GRANT is open.
+  }
+}

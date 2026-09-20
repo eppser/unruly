@@ -1,0 +1,25 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      // DELIBERATELY OPEN listing. Lab fixture for unruly, synthetic data
+      // only. This is what firebase-storage-anon-read reports: the object
+      // NAMES are visible to any stranger, and each name is then a URL.
+      //
+      // The grant must sit inside this nested match. Declared on the parent
+      // `match /b/{bucket}/o` it compiles, releases, and silently grants
+      // nothing -- listing stays 403 and the fixture proves the opposite of
+      // what it claims.
+      allow list: if true;
+    }
+
+    // Contents of /public are open too.
+    match /public/{allPaths=**} {
+      allow get: if true;
+    }
+
+    // /private grants nothing. Rules only ever grant, so the ABSENCE of a rule
+    // is the control: its name appears in the listing, its CONTENT does not,
+    // and a scanner that reports reading it is producing a false positive.
+  }
+}

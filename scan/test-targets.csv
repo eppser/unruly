@@ -1,0 +1,4 @@
+url,domain,provider,region,title,html_bytes,js_bytes
+# Local end-to-end test targets for scripts/scan-batch.py. Not research data.
+http://127.0.0.1:54321,lab-fixture.local,docker,local,lab fixture,0,0
+http://127.0.0.1:59999,unreachable.local,docker,local,deliberately dead target,0,0

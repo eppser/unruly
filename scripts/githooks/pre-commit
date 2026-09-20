@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Refuse a commit that does not build, is not formatted, or breaks a fast guard.
+#
+# Twice in one week a commit landed on a red tree here. Both times the suite
+# had been run, the failure had been PRINTED, and the commit went ahead anyway
+# -- once because the command was `go test ...; git commit` rather than `&&`,
+# once because the output scrolled past. Reading a result is not the same as
+# depending on it, and the difference is invisible until it costs something.
+#
+# Deliberately fast. The full audit takes 25 minutes and the whole suite over
+# two; a hook that slow gets bypassed with --no-verify within a day, and a gate
+# people route around is worse than none because it also removes the habit of
+# checking. This runs what is cheap and catches the shape that actually got
+# through: a compile error, an unformatted file, or one of the structural
+# guards that grade the tree against its own documentation.
+#
+# `git commit --no-verify` still works, on purpose. This is a seatbelt, not a
+# lock: there are honest reasons to commit a known-red tree, and the one that
+# matters is committing the FAILING TEST FIRST, which this project does
+# constantly.
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+fail() { echo; echo "pre-commit: $1" >&2; echo "Commit refused. --no-verify overrides, deliberately." >&2; exit 1; }
+
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+if [ -n "$staged" ]; then
+  unformatted=$(gofmt -l $staged 2>/dev/null || true)
+  [ -z "$unformatted" ] || fail "not gofmt'd:
+$unformatted"
+fi
+
+go build ./... >/dev/null 2>&1 || {
+  go build ./... 2>&1 | head -10 >&2
+  fail "the tree does not build"
+}
+
+go vet ./... >/dev/null 2>&1 || {
+  go vet ./... 2>&1 | head -10 >&2
+  fail "go vet objects"
+}
+
+# The structural guards: they grade the tree against its own documentation and
+# catalogues, they are what caught the last red commit, and they run in seconds
+# because none of them touches a network or a fixture.
+guards='Protocol|KnownProtocol|IdCoverage|ChecksMd|AccuracyClaim|Declin|CorpusStillScores|HandlerOffences|NoTestHandler|SkippedCheckCount|CitedByADocument'
+if ! out=$(go test ./internal/eval -run "$guards" -count=1 2>&1); then
+  printf '%s\n' "$out" | grep -E '^ *--- FAIL|^\s+\w+_test\.go' | head -12 >&2
+  fail "a structural guard failed"
+fi

@@ -1,0 +1,21 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "public_config": {
+      ".read": true,
+      ".write": false
+    },
+    "open_chat": {
+      ".read": true,
+      ".write": true,
+      "private_dm": {
+        ".read": false
+      }
+    },
+    "admin_tokens": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

@@ -1,0 +1,31 @@
+# Explicit project name: without it Docker derives one from the directory, so
+# two checkouts on one machine silently share containers. Fixed host port for
+# the same reason the other fixtures use one -- the eval answer key records it.
+name: unruly-edge
+
+# Real Supabase edge-runtime, not a mock.
+#
+# The two remaining unverified checks are both about Edge Functions, and
+# neither can be closed by replaying a recorded response: what is being tested
+# is how the runtime actually answers -- which statuses mean absent, which mean
+# protected, which mean the function ran. A hand-written mock would grade the
+# scanner against my assumptions about the platform instead of the platform.
+services:
+  functions:
+    image: supabase/edge-runtime:v1.67.4
+    command: start --main-service /home/deno/functions/main -p 9000
+    volumes:
+      - ./functions:/home/deno/functions:ro
+    ports:
+      - "54351:9000"
+
+  # Same runtime, a main service that answers 200 to every name. Models a
+  # catch-all router in front of the function host, which is what makes a naive
+  # "probe the name, got 200, it exists" check report the entire wordlist.
+  functions-permissive:
+    image: supabase/edge-runtime:v1.67.4
+    command: start --main-service /home/deno/functions/main -p 9000
+    volumes:
+      - ./permissive:/home/deno/functions:ro
+    ports:
+      - "54352:9000"

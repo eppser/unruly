@@ -1,0 +1,43 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name and two checkouts would share containers and volumes.
+name: unruly-bench-07
+
+# PostgREST is NOT published to the host. The only way in is the proxy on
+# 54461, which is the point: if the upstream were reachable directly, the
+# rewriting could be sidestepped and the project would measure nothing.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54462:5432"]
+    volumes:
+      # File by file: the postgres entrypoint ignores subdirectories of
+      # /docker-entrypoint-initdb.d and logs it, which presents as a database
+      # with correct roles and no tables.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    # No ports. Reachable only from the proxy, on the compose network.
+
+  proxy:
+    image: nginx:alpine
+    depends_on: [rest]
+    volumes: ["./conf/proxy.conf:/etc/nginx/conf.d/default.conf:ro"]
+    ports: ["54461:80"]

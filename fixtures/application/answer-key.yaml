@@ -1,0 +1,101 @@
+# Application lab ground truth, for EXPLOITATION rather than detection.
+#
+# backend/application's testbed already grades recall: given an application
+# shaped like the one an assessor walked by hand, does the scanner report the
+# right things. It does not answer the harder question -- can anybody actually
+# DO what the finding claims -- because the scanner performs the retrieval it
+# checks. That is why the application findings sat at `pending` in
+# docs/exploitability.md.
+#
+# This key drives internal/exploit, which imports nothing from internal/routes.
+# Every row below is transcribed BY HAND from fixtures/application/app.go,
+# which is the fixture's own source of truth, and not from anything the scanner
+# reports about it. Two implementations that share no line, agreeing on what
+# this application does.
+#
+# Unlike the other labs this one needs no external product and no network, so
+# the demonstrations run offline, deterministically, on anyone's machine.
+
+project_ref: application-lab
+base_url: http://127.0.0.1:0
+notes: >
+  Ports are chosen at run time, so base_url is overridden by the harness. What
+  matters here is the paths, the credentials and what each returns.
+
+principals:
+  - label: a
+    token: fixture-token-a
+  - label: b
+    token: fixture-token-b
+
+exploits:
+  - id: public-record-served-to-anyone
+    technique: read
+    path: /system/mode
+    class: anonymous read
+    why: >
+      the handler returns the record before looking at Authorization at all, so
+      a caller with no credential receives it. It carries updated_by_email,
+      which is what separates this from a status page: the finding is not that
+      an endpoint is open but that an open endpoint holds personal data.
+    proof: GET /system/mode with no headers returns a body containing an address
+    scanner_finding: app-public-record-exposure
+
+  - id: specification-published-to-anyone
+    technique: read
+    path: /openapi.json
+    class: anonymous read
+    why: >
+      the specification names /crm/customers and /internal/logs, which the
+      front-end bundle never calls. Reading it is what turns "every collection
+      endpoint answers 401" into a list of names to try, and it is how the one
+      endpoint that does NOT answer 401 becomes findable.
+    proof: GET /openapi.json with no headers returns a document naming five GET operations
+    scanner_finding: app-openapi-schema-exposed
+
+  - id: rewrite-header-bypasses-the-check
+    technique: read
+    path: /admin/users
+    class: authorisation bypass
+    why: >
+      the handler honours X-Original-URL BEFORE routing, which is the mistake a
+      reverse proxy makes when it authorises the path it received and forwards
+      the one the header names. A plain GET is refused with 401.
+    proof: >
+      GET / carrying X-Original-URL:/admin/users returns the user list, while a
+      plain GET /admin/users returns 401
+    scanner_finding: app-auth-bypass
+
+  - id: one-account-reads-anothers-invoice
+    technique: read
+    path: /invoices/42
+    class: broken ownership
+    why: >
+      the handler accepts either token and returns the SAME record, so it
+      checks that somebody is signed in and not whose record it is. Three
+      answers are needed to call this a finding and the fixture supplies all
+      three: anonymous is refused, A receives the record, B receives it
+      identically.
+    proof: >
+      GET /invoices/42 returns 401 with no token and the identical body for
+      fixture-token-a and fixture-token-b
+    scanner_finding: app-cross-identity-read
+
+# The CONTROLS matter as much as the exploits. A scan that reports these is
+# worse than one that misses everything above: it sends somebody to fix things
+# that are already right, and discredits the findings that are real.
+controls:
+  - path: /profile
+    why: >
+      selects the row FOR the caller, so A and B receive different bodies from
+      one URL. This is the correct design, and a cross-identity check that
+      reports it would report every well-built endpoint in the application.
+    expect: different body per token, 401 without one
+
+  - path: /crm/customers
+    why: refuses every plain request
+    expect: 401 for anonymous, A and B alike
+
+  - path: /internal/logs
+    why: refuses every plain request
+    expect: 401 for anonymous, A and B alike

@@ -1,0 +1,193 @@
+# Ground truth for corpus project 01: RLS never enabled, exposure by GRANT.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 01-rls-off-crud, which reads this file, performs
+# the writes it claims against a marker row inserted by psql, and reports any
+# claim that did not hold. Nothing here is inferred from the DDL.
+#
+# The one property this project measures that no other does: the four write
+# VERBS are independent. audit_log refuses INSERT and permits DELETE. A
+# scanner carrying a single "writable" bit is wrong about this table whichever
+# way it sets it.
+
+name: 01-rls-off-crud
+project_ref: bench-01
+base_url: http://127.0.0.1:54401
+# Bare PostgREST at the root: the self-hosted layout, not the managed one.
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  RLS is not enabled on any table in this project. That is deliberate: with no
+  policies anywhere, every difference between these five relations comes from
+  GRANTs alone, which isolates the privilege axis from the policy axis that
+  project 03 measures.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    - name: no table in public has RLS enabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relrowsecurity"
+      expect: 0
+    - name: no policies exist
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public'"
+      expect: 0
+
+  relations:
+    # Full CRUD. The baseline every other row is compared against.
+    - name: customers
+      schema: public
+      rows: 25
+      read_exposed: true
+      read_status: 206
+      insert_reachable: true
+      update_reachable: true
+      delete_reachable: true
+      sensitive_columns: [full_name, email, phone_number, address_line]
+      probe:
+        post_body: '{"full_name":"unruly post","email":"post@example.invalid"}'
+        marker_sql: "INSERT INTO public.customers (full_name,email) VALUES ('unruly marker','marker@example.invalid') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"full_name":"unruly-updated"}'
+        update_check_sql: "SELECT full_name FROM public.customers WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.customers WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.customers WHERE email IN ('marker@example.invalid','post@example.invalid')"
+
+    # Same privileges as customers; the difference is entirely in the CONTENT.
+    # A scanner that ranks by data kind must put this above customers.
+    - name: user_credentials
+      schema: public
+      rows: 6
+      read_exposed: true
+      read_status: 206
+      insert_reachable: true
+      update_reachable: true
+      delete_reachable: true
+      sensitive_columns: [email, password_hash, api_key, totp_secret]
+      probe:
+        post_body: '{"email":"post@example.invalid","password_hash":"x","api_key":"y"}'
+        marker_sql: "INSERT INTO public.user_credentials (email,password_hash,api_key) VALUES ('marker@example.invalid','x','y') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"api_key":"unruly-updated"}'
+        update_check_sql: "SELECT api_key FROM public.user_credentials WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.user_credentials WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.user_credentials WHERE email IN ('marker@example.invalid','post@example.invalid')"
+
+    # The reason this project exists. GRANT SELECT, DELETE and nothing else:
+    # readable, erasable, and NOT insertable. An INSERT probe reports this
+    # table as safe; the table can be emptied by a stranger.
+    - name: audit_log
+      schema: public
+      rows: 10
+      read_exposed: true
+      read_status: 206
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: true
+      probe:
+        post_body: '{"actor":"unruly-post","action":"probe"}'
+        marker_sql: "INSERT INTO public.audit_log (actor,action) VALUES ('unruly-marker','probe') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"action":"unruly-updated"}'
+        update_check_sql: "SELECT action FROM public.audit_log WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.audit_log WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.audit_log WHERE actor IN ('unruly-marker','unruly-post')"
+
+    # Read-only. Card numbers and IBANs, so the severity must be raised on a
+    # relation nobody can write to — exposure and impact are separate axes.
+    - name: payment_methods
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [card_number, card_expiry, iban, billing_email]
+      probe:
+        post_body: '{"card_number":"4111111111111111"}'
+        marker_sql: "INSERT INTO public.payment_methods (customer_id,card_number,billing_email) VALUES (1,'4111111111111111','marker@example.invalid') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"card_number":"unruly-updated"}'
+        update_check_sql: "SELECT card_number FROM public.payment_methods WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.payment_methods WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.payment_methods WHERE billing_email='marker@example.invalid'"
+
+    # The precision control. RLS is off here too, and it holds an API secret,
+    # so a scanner reasoning "RLS disabled means exposed" reports it. It holds
+    # no grant for anon, so Postgres refuses with 42501 and PostgREST answers
+    # 401 — while NAMING the table, which is why it is still discoverable.
+    - name: internal_settings
+      schema: public
+      rows: 3
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"key":"unruly-post","value":"x"}'
+        marker_sql: "INSERT INTO public.internal_settings (key,value) VALUES ('unruly-marker','x') RETURNING key"
+        row_filter: "key=eq.{id}"
+        update_body: '{"value":"unruly-updated"}'
+        update_check_sql: "SELECT value FROM public.internal_settings WHERE key='{id}'"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.internal_settings WHERE key='{id}'"
+        cleanup_sql: "DELETE FROM public.internal_settings WHERE key IN ('unruly-marker','unruly-post')"
+
+  checks:
+    # PostgREST serves its OpenAPI document to anon by default, so most of the
+    # relation list is one unauthenticated GET away. Recorded because it makes
+    # the discovery half of this target largely solvable — the interesting
+    # measurement here is exposure, not enumeration. Project 09 removes it.
+    - name: OpenAPI root is served to anon and names customers
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "customers"
+
+    # MEASURED, and not what the first draft of this file claimed: OpenAPI
+    # lists only the relations the REQUESTING ROLE can touch. internal_settings
+    # holds no grant for anon and is therefore absent from the document, while
+    # a direct GET still answers 401 and names it in the error message.
+    #
+    # That asymmetry is a real finding about this whole class of target: the
+    # cheap discovery path (read the OpenAPI document) systematically misses
+    # exactly the relations that REVOKE protects, and those are the ones an
+    # operator most wants to know a scanner can see. Enumeration and exposure
+    # are not the same list.
+    - name: OpenAPI omits the relation anon holds no privilege on
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: "internal_settings"
+
+    - name: the forbidden relation is still named by its own 401
+      method: GET
+      path: /internal_settings
+      expect_status: 401
+      expect_body_contains: "internal_settings"
+
+    # A relation that does not exist answers differently from one that exists
+    # and is forbidden. That distinction is what makes discovery decidable.
+    - name: a nonexistent relation is 404 PGRST205
+      method: GET
+      path: /no_such_relation_here
+      expect_status: 404
+      expect_body_contains: "PGRST205"

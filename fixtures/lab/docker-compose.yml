@@ -1,0 +1,156 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# DIRECTORY name, so two checkouts of this repository on one machine both
+# produce a project called "lab" and silently reuse each other's containers
+# and volumes — which presents as a database with no tables and initdb
+# reporting "ignoring /docker-entrypoint-initdb.d/*".
+#
+# Note the fixtures bind FIXED host ports, so only one checkout can run them
+# at a time. That is deliberate: the eval targets record those ports, and a
+# scan is meant to be reproducible from the committed answer key.
+name: unruly-lab
+
+# Minimal PostgREST + Postgres fixture.
+#
+# The full `supabase start` stack pulls ~8GB (Studio, Logflare, edge-runtime,
+# imgproxy, Kong) and stalled on this machine. None of that is needed here:
+# unruly's graded dimensions — relation discovery, read and write
+# exposure, routine discovery — all speak to PostgREST. Auth and Storage are
+# covered separately against the cloud target.
+#
+# Kong is skipped too, so PostgREST is reached directly. The scanner prefixes
+# paths with /rest/v1, which is Kong's route in the managed product, so the
+# fixture mounts PostgREST at that prefix via PGRST_OPENAPI_SERVER_PROXY_URI
+# and an nginx shim.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports:
+      - "54329:5432"
+    volumes:
+      - ./schema:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      # Two schemas, so the multi-schema pass has something to grade against.
+      PGRST_DB_SCHEMAS: public,reporting
+      PGRST_DB_ANON_ROLE: anon
+      # Same secret the fixture JWT is signed with.
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      # Ten is the PostgREST default and it makes this fixture the bottleneck
+      # rather than the thing being measured. Two scans back to back produced
+      # 37 findings and then 15, the second reporting
+      # unruly-capability-degraded/postgrest-error-codes -- the scanner
+      # correctly noticing it could not see rather than reporting a clean
+      # project, which is the design working and a flaky eval either way.
+      # Fifteen seconds of idle was enough to recover, which is what a pool
+      # draining looks like.
+      PGRST_DB_POOL: "40"
+    ports:
+      - "54321:3000"
+
+  # A minimal static site that ships a service_role key to the browser.
+  #
+  # supabase-service-key-exposed is the worst real-world Supabase
+  # misconfiguration and the tool's clearest critical, and its end-to-end path
+  # had never executed: a sweep of every finding id across every target showed
+  # it was built only by unit tests. A rule that has never fired against a real
+  # HTTP response is a rule nobody has watched work.
+  #
+  # The key is MINTED at fixtures-up time and written into ./site, which is
+  # gitignored. Committing a JWT-shaped string would trip this repository's own
+  # secret scan, and rightly: a fixture is not a reason to keep a credential in
+  # the tree, even a fake one.
+  site:
+    image: nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+    ports:
+      - "54322:80"
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./site.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # See throttled.conf: reproduces a target under a rate limit, where some
+  # probes get no readable answer and the relation list is a lower bound.
+  throttled:
+    image: nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+    ports:
+      - "54323:80"
+    volumes:
+      - ./throttled.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # See preview.conf: a stale branch deploy still serving an anon key.
+  preview:
+    image: nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+    ports:
+      - "54324:80"
+    volumes:
+      - ./preview:/usr/share/nginx/html:ro
+      - ./preview.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # See archive.conf: a local stand-in for web.archive.org, so the historic-key
+  # findings can be produced by a real scan instead of only by unit tests.
+  archive:
+    image: nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+    ports:
+      - "54325:80"
+    volumes:
+      - ./archive:/usr/share/nginx/html:ro
+      - ./archive.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # GoTrue, so the auth surface is graded locally rather than only against a
+  # cloud project.
+  #
+  # Every Supabase auth check -- open signup, the password policy, anonymous
+  # sign-in, and the escalation pass that has to BE a logged-in user -- was
+  # measurable only against the exploit lab, which needs network access and a
+  # secret CI does not have. A check graded only where the secrets are is a
+  # check that silently stops being graded.
+  #
+  # Deliberately permissive: signup open, autoconfirm on, and no password
+  # policy beyond the default floor. This fixture exists to be the vulnerable
+  # case, exactly as the PostgREST half is.
+  auth:
+    image: public.ecr.aws/supabase/gotrue:v2.151.0
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: 9999
+      API_EXTERNAL_URL: http://127.0.0.1:54326
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:fixture@db:5432/fixture
+      GOTRUE_SITE_URL: http://127.0.0.1:54322
+      GOTRUE_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "true"
+      GOTRUE_LOG_LEVEL: warn
+    ports:
+      - "54326:9999"
+
+  # The managed-shaped entry point: one origin, real services behind it.
+  gateway:
+    image: nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+    depends_on: [rest, auth]
+    volumes: ["./gateway.conf:/etc/nginx/conf.d/default.conf:ro"]
+    ports: ["54327:80"]

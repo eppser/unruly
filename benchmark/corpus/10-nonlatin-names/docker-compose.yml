@@ -1,0 +1,41 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so two checkouts of `10-nonlatin-names` would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-10
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+      # The database is UTF8 by default in this image, but `psql` picks its
+      # CLIENT encoding from the locale, and `docker compose exec` does not
+      # bring a locale with it. Left alone, a table called 顧客 comes back from
+      # the checker's psql as mojibake or as an error, and the answer key would
+      # look wrong for a reason that has nothing to do with the target. Pinned
+      # here so every psql in this project -- including the ones lib/check.py
+      # runs -- speaks UTF-8.
+      PGCLIENTENCODING: UTF8
+      LANG: C.UTF-8
+    ports: ["54492:5432"]
+    volumes:
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54491:3000"]

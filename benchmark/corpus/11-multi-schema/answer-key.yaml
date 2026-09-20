@@ -1,0 +1,336 @@
+# Ground truth for corpus project 11: four exposed schemas, one relation name.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 11-multi-schema. Nothing here is inferred from
+# the DDL: row counts come from psql in the container, exposure comes from a
+# real anonymous HTTP request carrying the right Accept-Profile header.
+#
+# The one property this project measures that no other does: "is `users`
+# exposed?" HAS NO SINGLE ANSWER on this target. The same name resolves to
+# four different relations in four schemas with four different verdicts, and
+# the schema is selected by a request HEADER, not by the URL path. A scanner
+# that carries one verdict per NAME is wrong about three of them whichever way
+# it sets it.
+
+name: 11-multi-schema
+project_ref: bench-11
+base_url: http://127.0.0.1:54501
+# Bare PostgREST at the root: the self-hosted layout, not the managed one.
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  PGRST_DB_SCHEMAS is public,api,legacy,reporting. The FIRST entry is the
+  default: a request with no Accept-Profile header is answered from `public`,
+  and PostgREST echoes which schema it used in a Content-Profile RESPONSE
+  header. That was measured, not assumed, and the checks below pin it.
+
+  `reporting` is the schema that presents as empty over HTTP. USAGE on the
+  schema is granted and no table privilege is, so every request answers 401
+  with SQLSTATE 42501 while psql sees three tables holding 47 rows. The 401
+  names the relation, which makes it positive evidence of existence; a scanner
+  that reads 401 as "says nothing" reports the whole schema as absent.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public, api, legacy, reporting]
+
+  psql:
+    - name: all four exposed schemas exist in the database
+      sql: "SELECT count(*) FROM information_schema.schemata WHERE schema_name IN ('public','api','legacy','reporting')"
+      expect: 4
+    - name: a relation called users exists in all four of them
+      sql: "SELECT count(*) FROM information_schema.tables WHERE table_name='users' AND table_schema IN ('public','api','legacy','reporting')"
+      expect: 4
+    - name: public.users has RLS enabled
+      sql: "SELECT relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='users'"
+      expect: t
+    - name: public.users has no policy, which is what empties it
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='users'"
+      expect: 0
+    - name: legacy.users has RLS disabled
+      sql: "SELECT relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='legacy' AND c.relname='users'"
+      expect: f
+    # api.users is a VIEW. Its reloptions are empty, so security_invoker is at
+    # its PostgreSQL 15+ default of false and the view runs as its owner —
+    # which is why it returns the 12 rows public.users refuses to hand out.
+    - name: api.users is a view
+      sql: "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='api' AND c.relname='users'"
+      expect: v
+    - name: api.users has no reloptions, so security_invoker is at its false default
+      sql: "SELECT coalesce(array_to_string(c.reloptions,','),'none') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='api' AND c.relname='users'"
+      expect: none
+    - name: api.users projects only id and display_name
+      sql: "SELECT string_agg(column_name,',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='api' AND table_name='users'"
+      expect: id,display_name
+    # The reporting half: the tables are real and hold real rows, and anon
+    # holds not one privilege on any of them. Both halves have to be asserted
+    # or "the schema is empty over HTTP" is indistinguishable from "the schema
+    # is empty".
+    - name: reporting holds three base tables
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='reporting' AND c.relkind='r'"
+      expect: 3
+    - name: those three tables hold 47 rows between them
+      sql: "SELECT (SELECT count(*) FROM reporting.users)+(SELECT count(*) FROM reporting.revenue_by_month)+(SELECT count(*) FROM reporting.churn_cohorts)"
+      expect: 47
+    - name: anon holds zero table privileges anywhere in reporting
+      sql: "SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema='reporting' AND grantee='anon'"
+      expect: 0
+
+  relations:
+    # ---------------------------------------------------------------------
+    # `users`, four times. Read these four entries together: they are the
+    # project.
+    # ---------------------------------------------------------------------
+
+    # 1/4 — public.users. The DEFAULT schema, so this is what a request with
+    # no header gets. RLS on, no policy: the grant permits the query and the
+    # policy set removes every row. HTTP 200 with body `[]`, MEASURED.
+    # A scanner that never sends Accept-Profile reports this target clean.
+    - name: users
+      schema: public
+      rows: 12
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+
+    # 2/4 — api.users. A view over the same base table, projecting id and
+    # display_name only. This is the CORRECT design and must NOT be reported:
+    # 12 rows are readable and none of them is an email address. Precision
+    # here requires reading columns, not names.
+    - name: users
+      schema: api
+      rows: 12
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+
+    # 3/4 — legacy.users. THE FINDING. The pre-migration copy: RLS never
+    # enabled, full CRUD granted to anon, bcrypt hashes and email addresses
+    # still in it. Same URL as the safe one, different header.
+    - name: users
+      schema: legacy
+      rows: 6
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [email, password_hash, reset_token]
+      insert_reachable: true
+      update_reachable: true
+      delete_reachable: true
+      probe:
+        post_body: '{"email":"post@example.invalid","password_hash":"x"}'
+        marker_sql: "INSERT INTO legacy.users (email,password_hash) VALUES ('marker@example.invalid','x') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"password_hash":"unruly-updated"}'
+        update_check_sql: "SELECT password_hash FROM legacy.users WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM legacy.users WHERE id={id}"
+        cleanup_sql: "DELETE FROM legacy.users WHERE email IN ('marker@example.invalid','post@example.invalid')"
+
+    # 4/4 — reporting.users. Neither empty nor readable nor absent: 401 with
+    # SQLSTATE 42501, naming the table. Nine rows sit behind it.
+    - name: users
+      schema: reporting
+      rows: 9
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"email":"post@example.invalid","lifetime_value":1,"segment":"trial"}'
+        marker_sql: "INSERT INTO reporting.users (email,lifetime_value,segment) VALUES ('marker@example.invalid',1,'trial') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"segment":"unruly-updated"}'
+        update_check_sql: "SELECT segment FROM reporting.users WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM reporting.users WHERE id={id}"
+        cleanup_sql: "DELETE FROM reporting.users WHERE email IN ('marker@example.invalid','post@example.invalid')"
+
+    # ---------------------------------------------------------------------
+    # One relation per schema that exists in NO other schema. Finding `users`
+    # four times says nothing about how many schemas were reached; finding
+    # these four says all four were.
+    # ---------------------------------------------------------------------
+    - name: announcements
+      schema: public
+      rows: 3
+      read_exposed: true
+      read_status: 206
+
+    - name: service_status
+      schema: api
+      rows: 4
+      read_exposed: true
+      read_status: 206
+
+    - name: sessions
+      schema: legacy
+      rows: 3
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [user_email, session_token]
+
+    - name: revenue_by_month
+      schema: reporting
+      rows: 14
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+
+    - name: churn_cohorts
+      schema: reporting
+      rows: 24
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+
+  checks:
+    # --- which schema answers a header-less request -----------------------
+    # MEASURED: the first entry of PGRST_DB_SCHEMAS is the default, and
+    # PostgREST says so in a Content-Profile RESPONSE header. That header is
+    # the cheapest way for a scanner to learn it is on a multi-schema target
+    # at all, and it costs one unauthenticated GET.
+    - name: a request with no Accept-Profile is answered from public
+      method: GET
+      path: /users?select=*&limit=1
+      expect_status: 200
+      expect_header:
+        Content-Profile: public
+    - name: and public.users answers with an empty array, not a refusal
+      method: GET
+      path: /users?select=*&limit=1
+      expect_status: 200
+      expect_body_contains: "[]"
+    - name: the same URL with a header returns password hashes
+      method: GET
+      path: /users?select=*&limit=1
+      headers:
+        Accept-Profile: legacy
+      expect_status: 200
+      expect_body_contains: "password_hash"
+      expect_header:
+        Content-Profile: legacy
+    - name: and the safe view at the same URL returns no email column at all
+      method: GET
+      path: /users?select=*&limit=1
+      headers:
+        Accept-Profile: api
+      expect_status: 200
+      expect_body_missing: "email"
+
+    # --- the schema-name oracle -------------------------------------------
+    # SURPRISE, and the most useful thing in this project. An UNKNOWN profile
+    # is not a 404: PostgREST answers 406 PGRST106 and its hint ENUMERATES
+    # EVERY EXPOSED SCHEMA. Schema discovery on this target is one request
+    # with a nonsense header; no wordlist is involved.
+    - name: an unknown profile enumerates every exposed schema in its hint
+      method: GET
+      path: /users?select=*&limit=1
+      headers:
+        Accept-Profile: nosuchschema
+      expect_status: 406
+      expect_body_contains: "Only the following schemas are exposed: public, api, legacy, reporting"
+
+    # --- the REVOKE-protected schema --------------------------------------
+    # Three relations, three 401s, and each one names itself. This is the
+    # regression guard for the bug class: 401 is not silence.
+    - name: reporting.users answers 401 and names itself
+      method: GET
+      path: /users?select=*&limit=1
+      headers:
+        Accept-Profile: reporting
+      expect_status: 401
+      expect_body_contains: "permission denied for table users"
+    - name: reporting.revenue_by_month answers 401 and names itself
+      method: GET
+      path: /revenue_by_month?select=*&limit=1
+      headers:
+        Accept-Profile: reporting
+      expect_status: 401
+      expect_body_contains: "permission denied for table revenue_by_month"
+    - name: reporting.churn_cohorts answers 401 and names itself
+      method: GET
+      path: /churn_cohorts?select=*&limit=1
+      headers:
+        Accept-Profile: reporting
+      expect_status: 401
+      expect_body_contains: "permission denied for table churn_cohorts"
+
+    # A relation that does not exist IN THAT SCHEMA answers differently from
+    # one that exists and is forbidden. Without this pair the 401 above could
+    # be explained away, and per-schema discovery would not be decidable.
+    - name: a relation from another schema is 404 PGRST205 under this profile
+      method: GET
+      path: /announcements?select=*&limit=1
+      headers:
+        Accept-Profile: reporting
+      expect_status: 404
+      expect_body_contains: "reporting.announcements"
+    - name: api-only service_status is 404 under the default profile
+      method: GET
+      path: /service_status?select=*&limit=1
+      expect_status: 404
+      expect_body_contains: "public.service_status"
+
+    # --- OpenAPI is PER SCHEMA, and lies about reporting -------------------
+    # PostgREST serves a separate OpenAPI document per profile, listing only
+    # what the requesting role may touch. The default document names two
+    # relations and no password hash; the legacy document names the hash; the
+    # reporting document has ONE path, "/", and names nothing.
+    - name: the default OpenAPI document names the public relations
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "announcements"
+    - name: the default OpenAPI document never mentions legacy
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: "password_hash"
+    - name: the legacy OpenAPI document does name the password column
+      method: GET
+      path: /
+      headers:
+        Accept-Profile: legacy
+      expect_status: 200
+      expect_body_contains: "password_hash"
+    - name: the reporting OpenAPI document names none of its three tables
+      method: GET
+      path: /
+      headers:
+        Accept-Profile: reporting
+      expect_status: 200
+      expect_body_missing: "revenue_by_month"
+
+  unverified:
+    - claim: >
+        Whether a scanner can reach `legacy` at all without first learning the
+        schema name is not measured here.
+      why: >
+        This key asserts that the 406 hint discloses all four names, which
+        makes discovery cheap on THIS target. A deployment that pins
+        PGRST_DB_SCHEMAS to one schema and routes the others through separate
+        PostgREST instances would not disclose them, and the corpus has no
+        project for that shape yet.
+    - claim: >
+        Content-Profile as a WRITE selector is exercised only through the
+        legacy.users probe.
+      why: >
+        The checker sends Content-Profile on POST, PATCH and DELETE, so the
+        three write claims on legacy.users do cover it. What is NOT covered is
+        the mismatched case — Accept-Profile naming one schema and
+        Content-Profile another on the same request — which PostgREST permits
+        and which no check here sends.

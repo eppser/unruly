@@ -1,0 +1,69 @@
+# Pinned collection- and path-name wordlist for unruly (Firebase).
+#
+# Firestore has no discovery oracle: listCollectionIds is admin-only and there
+# is no near-miss hint, so a scanner can only ask about names it already holds.
+# This list is therefore the FLOOR of recall, not the extent of it -- the same
+# limit that made a 90-entry wordlist match 1 of 21 relations when eight
+# Supabase scanners were benchmarked. Domain-specific names come from
+# vocabulary harvested out of the application, and every scan reports that its
+# Firestore recall is a lower bound.
+#
+# Conventional names only, and deliberately short: every entry costs one
+# request per project, and a list padded to look thorough is a list that makes
+# scans slower without making them find more.
+users
+user
+profiles
+profile
+accounts
+posts
+messages
+chats
+chat
+conversations
+comments
+notifications
+orders
+products
+items
+inventory
+customers
+contacts
+subscriptions
+payments
+invoices
+transactions
+settings
+config
+configuration
+public
+private
+admin
+adminUsers
+roles
+permissions
+sessions
+tokens
+apiKeys
+secrets
+logs
+events
+analytics
+feedback
+submissions
+forms
+uploads
+files
+documents
+media
+images
+data
+records
+entries
+tasks
+todos
+projects
+teams
+organizations
+members
+memberships

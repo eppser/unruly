@@ -1,0 +1,454 @@
+# Ground truth for corpus project 03: RLS on everywhere, only the POLICY varies.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 03-policy-shapes, which reads this file, performs
+# the writes it claims against a marker row inserted by psql, and reports any
+# claim that did not hold. Nothing here is inferred from the DDL.
+#
+# The one property this project measures that no other does: RLS policy SHAPE.
+# All eight relations have `relrowsecurity = true` and identical GRANTs
+# (SELECT, INSERT, UPDATE, DELETE to anon and authenticated -- asserted below
+# as 64 grant tuples). The outcomes still range from wide open to deny-all.
+
+name: 03-policy-shapes
+project_ref: bench-03
+base_url: http://127.0.0.1:54421
+# Bare PostgREST at the root: the self-hosted layout, not the managed one.
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  Privileges are the experimental control here, not a variable: the schema
+  issues one GRANT statement covering every table, so any difference between
+  two relations below is attributable to the policy alone. Project 01 runs the
+  mirror-image experiment -- RLS off everywhere, GRANTs varied.
+
+  Two claims are recorded in a way that needs explaining before they are read.
+  policy_insert_only originally carried NO insert_reachable claim, because
+  lib/check.py's insert probe sent Prefer: return=representation and RETURNING
+  is a read this table's policy set does not permit: the row committed and the
+  response was 401 42501, so the probe measured a refusal for a table it had
+  just written to. Recording insert_reachable: false to make the probe pass
+  would have been recording a false answer, so the claim was left out and the
+  exposure proved under checks instead. The probe now sends return=minimal --
+  PostgREST's own default -- and the claim is measured directly.
+
+  policy_delete_only uses an EMPTY row_filter, so its DELETE probe sends no
+  filter at all -- see the comment on that relation.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: [policy_authenticated_true]
+  schemas: [public]
+
+  psql:
+    # The experimental design, asserted rather than asserted-in-prose.
+    - name: all 8 tables in public have RLS enabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT c.relrowsecurity"
+      expect: 0
+    - name: public holds exactly 8 tables
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'"
+      expect: 8
+    # 8 tables x 4 verbs x 2 roles. If this is not 64 the privileges are not
+    # uniform and no outcome below can be attributed to a policy.
+    - name: the privilege grid is uniform across every table
+      sql: "SELECT count(DISTINCT grantee||privilege_type||table_name) FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee IN ('anon','authenticated') AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')"
+      expect: 64
+    - name: exactly one RESTRICTIVE policy exists
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND permissive='RESTRICTIVE'"
+      expect: 1
+    - name: rls_no_policy has zero policies
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='rls_no_policy'"
+      expect: 0
+    - name: policy_delete_only's single policy covers DELETE only
+      sql: "SELECT cmd FROM pg_policies WHERE schemaname='public' AND tablename='policy_delete_only'"
+      expect: DELETE
+
+    # The residue of setup.sh's anonymous HTTP POST. A stranger holding nothing
+    # but the anon key created row 990001 AND set is_admin on it, because the
+    # policy's WITH CHECK (true) constrains neither the row nor the columns.
+    - name: an anonymous HTTP POST set is_admin on the row it created
+      sql: "SELECT is_admin FROM public.policy_insert_only WHERE id=990001"
+      expect: t
+    - name: the row an anonymous HTTP POST created names its anonymous author
+      sql: "SELECT submitted_by FROM public.policy_insert_only WHERE id=990001"
+      expect: anon-http-probe@example.invalid
+
+  relations:
+    # ------------------------------------------------------------------
+    # RLS on, zero policies. Deny-all, and it presents as HTTP 200 with an
+    # empty array rather than as an error -- so read_status is 200 while
+    # read_exposed is false. Reporting this relation is a false positive.
+    # ------------------------------------------------------------------
+    - name: rls_no_policy
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [account_email, api_key]
+      probe:
+        post_body: '{"account_email":"post@example.invalid","api_key":"x"}'
+        marker_sql: "INSERT INTO public.rls_no_policy (account_email,api_key) VALUES ('marker@example.invalid','m') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"account_email":"unruly-updated"}'
+        update_check_sql: "SELECT account_email FROM public.rls_no_policy WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.rls_no_policy WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.rls_no_policy WHERE account_email IN ('marker@example.invalid','post@example.invalid')"
+
+    # ------------------------------------------------------------------
+    # FOR ALL USING (true) WITH CHECK (true). All four verbs, from one policy
+    # line. This is the relation the project exists to contrast against
+    # policy_select_true_only, which differs from it by one keyword.
+    # ------------------------------------------------------------------
+    - name: policy_for_all_true
+      schema: public
+      rows: 7
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      insert_reachable: true
+      update_reachable: true
+      delete_reachable: true
+      sensitive_columns: [full_name, email, phone_number]
+      probe:
+        post_body: '{"full_name":"unruly post","email":"post@example.invalid"}'
+        marker_sql: "INSERT INTO public.policy_for_all_true (full_name,email) VALUES ('unruly marker','marker@example.invalid') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"full_name":"unruly-updated"}'
+        update_check_sql: "SELECT full_name FROM public.policy_for_all_true WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.policy_for_all_true WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.policy_for_all_true WHERE email IN ('marker@example.invalid','post@example.invalid')"
+
+    # ------------------------------------------------------------------
+    # FOR SELECT USING (true) and nothing else. Same RLS bit, same grants, same
+    # 206 on read as the relation above -- and every write refused.
+    # ------------------------------------------------------------------
+    - name: policy_select_true_only
+      schema: public
+      rows: 5
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [email, iban]
+      probe:
+        post_body: '{"email":"post@example.invalid"}'
+        marker_sql: "INSERT INTO public.policy_select_true_only (email) VALUES ('marker@example.invalid') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"email":"unruly-updated"}'
+        update_check_sql: "SELECT email FROM public.policy_select_true_only WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.policy_select_true_only WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.policy_select_true_only WHERE email IN ('marker@example.invalid','post@example.invalid','unruly-updated')"
+
+    # ------------------------------------------------------------------
+    # FOR INSERT WITH CHECK (true) and nothing else.
+    #
+    # NO insert_reachable claim, deliberately. The anonymous INSERT IS accepted
+    # -- checks below prove it twice over HTTP, and two psql claims above read
+    # the row a real anonymous POST left behind. But lib/check.py's insert
+    # probe sends Prefer: return=representation, and RETURNING is a read: with
+    # no SELECT policy Postgres refuses the whole statement with 42501 and the
+    # message "new row violates row-level security policy", which names the
+    # wrong half of the problem. Claiming insert_reachable: true here would
+    # fail the check; claiming false would put a wrong answer in the key.
+    #
+    # rows is counted over the SEEDED rows only. The table is an append-only
+    # submission box, and verification appends to it.
+    # ------------------------------------------------------------------
+    - name: policy_insert_only
+      schema: public
+      rows: 3
+      row_count_sql: "SELECT count(*) FROM public.policy_insert_only WHERE submitted_by LIKE 'seed%'"
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+      # Measurable only since lib/check.py stopped sending
+      # Prefer: return=representation on its insert probe. This table's policy
+      # set commits the row and then refuses the RETURNING, so the response was
+      # 401 42501 "new row violates row-level security policy" -- a message
+      # naming the wrong half of what happened -- and the probe recorded the
+      # most interesting write shape in the corpus as not writable. The row
+      # count moved the whole time.
+      insert_reachable: true
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"submitted_by":"anon-post-probe@example.invalid","message":"probe","is_admin":true}'
+        marker_sql: "INSERT INTO public.policy_insert_only (submitted_by,message) VALUES ('marker@example.invalid','m') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"message":"unruly-updated"}'
+        update_check_sql: "SELECT message FROM public.policy_insert_only WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.policy_insert_only WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.policy_insert_only WHERE submitted_by IN ('marker@example.invalid','anon-post-probe@example.invalid')"
+
+    # ------------------------------------------------------------------
+    # FOR DELETE USING (true) and nothing else.
+    #
+    # row_filter is EMPTY on purpose, and the reason is the sharpest single
+    # finding in this project. A filtered delete -- ?id=eq.N -- REFERENCES a
+    # column, and Postgres applies SELECT policies to columns referenced by an
+    # UPDATE or DELETE. This table has no SELECT policy, so the WHERE clause
+    # matches nothing, and `DELETE ?id=eq.<a row that exists>` answers 204 with
+    # the row still there. An UNFILTERED delete references no column, so the
+    # DELETE policy is all that applies and the table empties.
+    #
+    # Measured: DELETE /policy_delete_only?  ->  204, 6 rows gone, 0 left.
+    #           DELETE /policy_delete_only?id=eq.N  ->  204, 0 rows gone.
+    #
+    # cleanup_sql therefore rebuilds the table rather than trimming it.
+    # ------------------------------------------------------------------
+    - name: policy_delete_only
+      schema: public
+      rows: 6
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: true
+      probe:
+        post_body: '{"invoice_no":"POST","amount_cents":1}'
+        marker_sql: "INSERT INTO public.policy_delete_only (invoice_no,amount_cents) VALUES ('INV-MARKER',1) RETURNING id"
+        row_filter: ""
+        update_body: '{"invoice_no":"unruly-updated"}'
+        update_check_sql: "SELECT invoice_no FROM public.policy_delete_only WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.policy_delete_only WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.policy_delete_only; INSERT INTO public.policy_delete_only (invoice_no, amount_cents) SELECT 'INV-2026-'||lpad(i::text,4,'0'), i*1000 FROM generate_series(1,6) i"
+
+    # ------------------------------------------------------------------
+    # FOR SELECT TO authenticated USING (true). Invisible to anon, fully
+    # readable by ANY account. The escalation case; project 04 supplies the
+    # other half by leaving signup open.
+    # ------------------------------------------------------------------
+    - name: policy_authenticated_true
+      schema: public
+      rows: 4
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [full_name, home_address, phone_number, date_of_birth]
+      probe:
+        post_body: '{"full_name":"unruly post","home_address":"x","phone_number":"y"}'
+        marker_sql: "INSERT INTO public.policy_authenticated_true (full_name,home_address,phone_number) VALUES ('unruly marker','x','y') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"full_name":"unruly-updated"}'
+        update_check_sql: "SELECT full_name FROM public.policy_authenticated_true WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.policy_authenticated_true WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.policy_authenticated_true WHERE full_name IN ('unruly marker','unruly post','unruly-updated')"
+
+    # ------------------------------------------------------------------
+    # The correct per-user policy, and the control that stops the relation
+    # above from being a vacuous finding. Identical RLS bit, identical grants,
+    # identical TO authenticated -- and the USING clause compares owner_id
+    # against the sub claim, so the answer depends on WHICH token is presented.
+    #
+    # rows counts all 6 seeded rows (psql runs as superuser and bypasses RLS).
+    # The token-dependent counts are asserted under checks and unverified.
+    # ------------------------------------------------------------------
+    - name: policy_owner_scoped
+      schema: public
+      rows: 6
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"owner_id":"22222222-2222-2222-2222-222222222222","note":"unruly post"}'
+        marker_sql: "INSERT INTO public.policy_owner_scoped (owner_id,note) VALUES ('22222222-2222-2222-2222-222222222222','unruly marker') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"note":"unruly-updated"}'
+        update_check_sql: "SELECT note FROM public.policy_owner_scoped WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.policy_owner_scoped WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.policy_owner_scoped WHERE note IN ('unruly marker','unruly post','unruly-updated')"
+
+    # ------------------------------------------------------------------
+    # PERMISSIVE FOR SELECT USING (true) AND RESTRICTIVE FOR SELECT USING
+    # (tenant claim). Permissive policies are OR-ed; restrictive policies are
+    # AND-ed over the result. No token in this corpus carries a `tenant` claim,
+    # so the restrictive predicate is NULL and the conjunction denies.
+    #
+    # This is the one relation where reading either policy on its own gives the
+    # wrong answer: the permissive one alone says world-readable.
+    # ------------------------------------------------------------------
+    - name: policy_restrictive_mix
+      schema: public
+      rows: 4
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [customer, card_number]
+      probe:
+        post_body: '{"tenant_id":1,"customer":"post@example.invalid"}'
+        marker_sql: "INSERT INTO public.policy_restrictive_mix (tenant_id,customer) VALUES (1,'marker@example.invalid') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"customer":"unruly-updated"}'
+        update_check_sql: "SELECT customer FROM public.policy_restrictive_mix WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.policy_restrictive_mix WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.policy_restrictive_mix WHERE customer IN ('marker@example.invalid','post@example.invalid','unruly-updated')"
+
+  checks:
+    # Discovery here is free and complete, which is the opposite of project 01.
+    # The OpenAPI document is built from GRANTs, and the grants are uniform, so
+    # all eight relations are listed to anon INCLUDING the six that answer with
+    # an empty array. Enumeration tells a scanner nothing about exposure in
+    # this project; only a probe does.
+    - name: OpenAPI lists the wide-open relation
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "policy_for_all_true"
+    - name: OpenAPI also lists the deny-all relation
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "rls_no_policy"
+    - name: OpenAPI also lists the delete-only relation
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "policy_delete_only"
+
+    # The insert-only shape, proved over HTTP and separately from setup.sh.
+    #
+    # 201 with return=minimal. This is PostgREST's DEFAULT preference for POST,
+    # so this is what an ordinary client does; a probe that asks for the row
+    # back is the unusual one.
+    - name: anonymous INSERT into policy_insert_only is accepted (return=minimal)
+      method: POST
+      path: /policy_insert_only
+      body: '{"id":990002,"submitted_by":"anon-http-probe@example.invalid","message":"anonymous submission over HTTP","is_admin":true}'
+      headers:
+        Prefer: return=minimal
+      expect_status: 201
+
+    # Posting the SAME primary key again can only conflict if the first POST
+    # committed. This is the proof that the row persisted, using nothing but
+    # HTTP.
+    - name: re-posting the same id conflicts, proving the first row persisted
+      method: POST
+      path: /policy_insert_only
+      body: '{"id":990002,"submitted_by":"anon-http-probe@example.invalid","message":"anonymous submission over HTTP","is_admin":true}'
+      headers:
+        Prefer: return=minimal
+      expect_status: 409
+      expect_body_contains: "23505"
+
+    # The same request asking for the row back is refused, and the SQLSTATE and
+    # message are the ones a scanner would read as "the INSERT was denied".
+    # They are not: the INSERT was permitted and the RETURNING was denied.
+    - name: the same INSERT asking for a representation is refused 42501
+      method: POST
+      path: /policy_insert_only
+      body: '{"submitted_by":"anon-http-probe@example.invalid","message":"asking for the row back","is_admin":true}'
+      headers:
+        Prefer: return=representation
+      expect_status: 401
+      expect_body_contains: "42501"
+
+    # Per-user scoping, from the side the checker can drive: identity A's token
+    # returns identity A's rows and NOT identity B's or C's. The mirror claim
+    # (identity B sees only B's row) is under unverified, with the by-hand
+    # transcript in the README.
+    - name: policy_owner_scoped returns identity A's own rows to identity A
+      method: GET
+      path: /policy_owner_scoped?select=*
+      role: authenticated
+      expect_status: 200
+      expect_body_contains: "identity A note 1"
+    - name: policy_owner_scoped withholds identity B's rows from identity A
+      method: GET
+      path: /policy_owner_scoped?select=*
+      role: authenticated
+      expect_status: 200
+      expect_body_missing: "identity B note 1"
+    - name: policy_owner_scoped withholds identity C's rows from identity A
+      method: GET
+      path: /policy_owner_scoped?select=*
+      role: authenticated
+      expect_status: 200
+      expect_body_missing: "identity C note 1"
+
+    # Same request, anon token: nothing at all, and a 200 rather than an error.
+    - name: policy_owner_scoped returns an empty array to anon
+      method: GET
+      path: /policy_owner_scoped?select=*
+      expect_status: 200
+      expect_body_missing: "identity A note 1"
+
+    # policy_authenticated_true is not scoped, so the SAME token that sees only
+    # its own rows above sees everybody's rows here.
+    - name: policy_authenticated_true returns every row to any account
+      method: GET
+      path: /policy_authenticated_true?select=*
+      role: authenticated
+      expect_status: 200
+      expect_body_contains: "Priya Raghunathan"
+    - name: policy_authenticated_true returns nothing to anon
+      method: GET
+      path: /policy_authenticated_true?select=*
+      expect_status: 200
+      expect_body_missing: "Priya Raghunathan"
+
+    # The restrictive AND, from both roles. Neither sees a row.
+    - name: policy_restrictive_mix returns nothing to anon
+      method: GET
+      path: /policy_restrictive_mix?select=*
+      expect_status: 200
+      expect_body_missing: "4111111111111111"
+    - name: policy_restrictive_mix returns nothing to an account either
+      method: GET
+      path: /policy_restrictive_mix?select=*
+      role: authenticated
+      expect_status: 200
+      expect_body_missing: "4111111111111111"
+
+  unverified:
+    - claim: >
+        The second authenticated identity (sub 33333333-3333-3333-3333-333333333333)
+        sees exactly its own single row in policy_owner_scoped and none of
+        identity A's three.
+      why: >
+        Verified by hand with curl and at the SQL level, both transcripts in
+        the README. It is not automated because lib/check.py can bind only two
+        tokens -- the anon key and one authenticated key -- and an answer key
+        cannot carry a literal JWT, which would be a credential committed to
+        the tree and would trip this repository's own secret scan.
+    - claim: >
+        The UNFILTERED anonymous DELETE removed these six specific rows rather
+        than the table being empty for some other reason.
+      why: >
+        The probe measures that the marker row is gone after the request, and
+        the row count is 6 before it and 0 after -- but lib/check.py records
+        only the marker's absence, so the "6 rows gone" half of that comes from
+        the by-hand transcript in the README rather than from a claim in this
+        file.

@@ -1,0 +1,29 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name and two checkouts would fight over the same containers.
+name: unruly-bench-06
+
+# Three kinds of unreachable, on three adjacent ports, because they present
+# differently at the socket and a scanner that lumps them together loses the
+# distinction that matters.
+#
+#   54451  nothing listening        -- no service is declared for it here.
+#   54452  accepts, then drops      -- nginx `return 444`.
+#   54453  answers, no backend      -- nginx proxying to a dead upstream.
+#
+# There is no database in this project and no relation to find. The whole
+# measurement is what the transport does.
+services:
+  drop:
+    image: nginx:alpine
+    volumes: ["./conf/drop.conf:/etc/nginx/conf.d/default.conf:ro"]
+    ports: ["54452:80"]
+
+  badgateway:
+    image: nginx:alpine
+    volumes: ["./conf/badgateway.conf:/etc/nginx/conf.d/default.conf:ro"]
+    ports: ["54453:80"]
+
+# Port 54451 is intentionally absent. Declaring a service that binds it and
+# then stopping the service would work too, but it would leave the port in a
+# state that depends on teardown order; leaving it undeclared makes "nothing
+# listening" a property of the file rather than of the last command run.

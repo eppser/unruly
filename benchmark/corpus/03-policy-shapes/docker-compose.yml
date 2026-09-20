@@ -1,0 +1,44 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so `03-policy-shapes` from two checkouts would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-03
+
+# Bare PostgREST at the ROOT, no gateway, no GoTrue. This project measures one
+# variable and needs nothing else running: every table has RLS enabled and the
+# same four GRANTs, so the only thing that differs between them is the policy.
+# Adding a gateway would introduce a second axis and make a failure ambiguous.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54422:5432"]
+    volumes:
+      # Mounted FILE BY FILE. The postgres entrypoint iterates
+      # /docker-entrypoint-initdb.d/* and matches on extension; a subdirectory
+      # falls through to the catch-all and is logged as "ignoring", which
+      # presents as a database with correct roles and no tables.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      # Legacy GUCs off, so the claims arrive as `request.jwt.claims` (a JSON
+      # document) rather than as `request.jwt.claim.sub`. Every owner-scoped
+      # policy in this file reads the former; with legacy GUCs on they would
+      # all silently evaluate to NULL and every table would look locked.
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54421:3000"]

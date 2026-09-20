@@ -1,0 +1,104 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so `04-auth-escalation` from two checkouts would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-04
+
+# The managed shape, configured the DANGEROUS way. This is project 02's mirror
+# image: same layout, same services, opposite settings, and the Postgres side
+# is not misconfigured at all.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54432:5432"]
+    volumes:
+      # Mounted FILE BY FILE. The postgres entrypoint iterates
+      # /docker-entrypoint-initdb.d/* and matches on extension; a subdirectory
+      # falls through to the catch-all and is logged as "ignoring", which
+      # presents as a database with correct roles and no tables.
+      #
+      # 00a_ sorts after 00_ and before 01_: PostgREST's roles, then GoTrue's
+      # role and schema, then the tables.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/00a_auth_roles.sql:/docker-entrypoint-initdb.d/00a_auth_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      # The same secret GoTrue signs with, which is the whole mechanism: a
+      # token minted by signing up is accepted by PostgREST as `authenticated`.
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://127.0.0.1:54431/rest/v1
+
+  # Configured the DANGEROUS way. Every one of these four settings is asserted
+  # over HTTP in answer-key.yaml rather than trusted because it is written here
+  # -- a compose file records an intention, and what a scanner meets is the
+  # running service.
+  auth:
+    image: public.ecr.aws/supabase/gotrue:v2.151.0
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: 9999
+      API_EXTERNAL_URL: http://127.0.0.1:54431/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:fixture@db:5432/fixture
+      GOTRUE_SITE_URL: http://127.0.0.1:54431
+      GOTRUE_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      # Anyone may create an account.
+      GOTRUE_DISABLE_SIGNUP: "false"
+      # ...and it is usable immediately, with no mailbox involved. Without this
+      # the account exists but its token is not issued until confirmation, so
+      # the escalation would need a mail server and would not be reproducible.
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      # ...or no account at all: POST /signup with an empty body returns a
+      # session for a throwaway identity.
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "true"
+      # ...and a six-character password is enough.
+      GOTRUE_PASSWORD_MIN_LENGTH: "6"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_LOG_LEVEL: warn
+    # Published directly as well as through the gateway, so the auth surface
+    # can be driven by hand without reasoning about the proxy.
+    ports: ["54433:9999"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:9999/settings"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+
+  gateway:
+    image: nginx:alpine
+    # `auth` must be HEALTHY, not merely started: nginx resolves a literal
+    # proxy_pass upstream at config-load time and exits with "host not found in
+    # upstream" if the auth container has died, which presents as a gateway
+    # failure with no mention of the actual cause.
+    depends_on:
+      rest: {condition: service_started}
+      auth: {condition: service_healthy}
+    volumes: ["./gateway.conf:/etc/nginx/conf.d/default.conf:ro"]
+    ports: ["54431:80"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/auth/v1/settings || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 40

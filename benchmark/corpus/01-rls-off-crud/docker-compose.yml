@@ -1,0 +1,41 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so `01-rls-off-crud` from two checkouts would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-01
+
+# Bare PostgREST at the ROOT, no gateway. This is the self-hosted layout: the
+# managed product mounts the same service under Kong at /rest/v1, and half the
+# corpus uses each, so a scanner that hardcodes one prefix scores 50%.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54402:5432"]
+    volumes:
+      # Mounted FILE BY FILE, not as a directory. The postgres entrypoint
+      # iterates /docker-entrypoint-initdb.d/* and matches on extension; a
+      # subdirectory falls through to the catch-all and is logged as
+      # "ignoring", which presents as a database with correct roles and no
+      # tables. Lexical order is the ordering guarantee, hence the 00_/01_
+      # prefixes.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54401:3000"]

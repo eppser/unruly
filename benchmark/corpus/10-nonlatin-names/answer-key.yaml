@@ -1,0 +1,408 @@
+# Ground truth for corpus project 10: every relation name is non-English.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 10-nonlatin-names. Row counts come from psql
+# inside the container; exposure comes from an anonymous HTTP GET on a
+# percent-encoded path; the write claims are performed for real against a
+# marker row and undone. Nothing here is inferred from the DDL.
+#
+# The one property this project measures that no other does: identifiers that
+# are not ASCII English. Sixteen relations across German, Japanese, Spanish and
+# Cyrillic, one that mixes three scripts in a single name, one outside the
+# Basic Multilingual Plane, one pair that differs only by letter case, and one
+# pair that differs only by Unicode normalisation form.
+#
+# A NOTE ON QUOTING IN THIS FILE. lib/check.py URL-encodes relation names, so
+# `name: 顧客` works as written. It does NOT encode `row_filter`, which is
+# spliced into the query string raw, so the Japanese primary key column there
+# is written pre-encoded as %E7%95%AA%E5%8F%B7. Several SQL statements below
+# are left UNQUOTED because they contain both single and double quotes;
+# lib/yamlite.py returns an unquoted scalar verbatim, which is the only way to
+# express `public."顧客"` in this parser's subset.
+
+name: 10-nonlatin-names
+project_ref: bench-10
+base_url: http://127.0.0.1:54491
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  Fifteen of the sixteen relation names contain at least one byte outside
+  ASCII; the sixteenth, benutzer_zugangsdaten, is ASCII but German. Every
+  identifier in the schema is double-quoted, because Postgres folds an
+  unquoted identifier to lower case and this project needs Ünïcödé and
+  ünïcödé to be two different tables.
+
+  Sensitive-data classification that keys on English column names finds
+  nothing here. The password hashes live in passwort_hash, パスワードハッシュ,
+  contraseña_hash and хеш_пароля; the card numbers live in número_de_tarjeta
+  and номер_карты. All of them hold real-shaped fake data.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    - name: public holds exactly 16 relations
+      sql: "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
+      expect: 16
+
+    # Bytes vs characters is the locale-independent test for "is this name
+    # ASCII". Exactly one name is: benutzer_zugangsdaten.
+    - name: 15 of the 16 relation names contain non-ASCII bytes
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND octet_length(c.relname::text) <> char_length(c.relname::text)"
+      expect: 15
+
+    # Four bytes per character in UTF-8 means every character is outside the
+    # Basic Multilingual Plane. Exactly one relation is named that way.
+    - name: one relation name is entirely outside the BMP
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND octet_length(c.relname::text) = 4 * char_length(c.relname::text)"
+      expect: 1
+
+    # The case pair. Two relations whose names differ only in the case of the
+    # first letter. A scanner that normalises case before deduplicating
+    # reports one relation instead of two.
+    - name: two relations differ only by the case of their first letter
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname::text IN (U&'\00DCn\00EFc\00F6d\00E9', U&'\00FCn\00EFc\00F6d\00E9')"
+      expect: 2
+
+    # MEASURED, and it cost an hour: lower() does NOT fold Ü to ü here.
+    # pg_class.relname is of type `name`, whose collation is C, and the cast
+    # to text carries that collation along, so lower() takes the C-locale path
+    # and touches only ASCII. The obvious catalogue query for "find me
+    # relations that differ only by case" therefore returns ONE row, not two.
+    # The same expression with an explicit COLLATE "default" returns both.
+    # Anything that case-folds identifiers read out of the catalogue inherits
+    # this, and inherits it silently.
+    - name: lower() on a catalogue name does not fold the umlaut
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND lower(c.relname::text) = U&'\00FCn\00EFc\00F6d\00E9'"
+      expect: 1
+    - name: the same expression with COLLATE default folds it and finds both
+      sql: SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND lower(c.relname::text COLLATE "default") = U&'\00FCn\00EFc\00F6d\00E9'
+      expect: 2
+
+    # The normalisation pair. Both render as café_registro. Postgres does not
+    # normalise identifiers, so they are two relations of 14 and 15 bytes.
+    - name: two relations render as cafe_registro
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname::text LIKE 'caf%registro'"
+      expect: 2
+    - name: the normalisation pair differs by exactly one byte of length
+      sql: "SELECT string_agg(octet_length(c.relname::text)::text, ',' ORDER BY octet_length(c.relname::text)) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname::text LIKE 'caf%registro'"
+      expect: 14,15
+    # Unquoted scalars: these contain both quote characters, which the answer
+    # key parser cannot carry inside a quoted string.
+    - name: the NFC cafe_registro holds 2 rows
+      sql: SELECT count(*) FROM public.U&"caf\00E9_registro"
+      expect: 2
+    - name: the NFD cafe_registro holds 3 rows
+      sql: SELECT count(*) FROM public.U&"cafe\0301_registro"
+      expect: 3
+
+    # Exposure totals, the scoring denominators for this project.
+    - name: 13 relations carry a SELECT grant for anon
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT')"
+      expect: 13
+    - name: 10 relations grant SELECT and have RLS off, so they return rows
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT') AND NOT c.relrowsecurity"
+      expect: 10
+    - name: 3 relations hold no SELECT grant at all
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT has_table_privilege('anon', c.oid, 'SELECT')"
+      expect: 3
+    - name: 3 relations have RLS enabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity"
+      expect: 3
+    - name: no policy exists, so every RLS-enabled relation returns empty
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public'"
+      expect: 0
+    - name: exactly one relation grants anon INSERT
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'INSERT')"
+      expect: 1
+
+  relations:
+    # ---- German ----------------------------------------------------------
+    # The credential store. Nothing in this table is called "password".
+    - name: benutzer_zugangsdaten
+      schema: public
+      rows: 5
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [benutzername, passwort_hash, api_schlüssel]
+    - name: zahlungsempfänger
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [empfängername, iban_nummer, kontoinhaber]
+    # RLS on, no policy: 200 and an empty array, not exposed and not absent.
+    - name: bestellübersicht
+      schema: public
+      rows: 7
+      read_exposed: false
+      read_status: 200
+
+    # ---- Japanese --------------------------------------------------------
+    # The only writable relation in the project, so that POST, PATCH and
+    # DELETE are exercised over a percent-encoded path and not only GET. The
+    # row_filter below is the primary key column 番号, pre-encoded, because
+    # lib/check.py splices row_filter into the query string without encoding.
+    - name: 顧客
+      schema: public
+      rows: 9
+      read_exposed: true
+      read_status: 206
+      insert_reachable: true
+      update_reachable: true
+      delete_reachable: true
+      sensitive_columns: [氏名, メールアドレス, 電話番号]
+      probe:
+        post_body: '{"氏名":"unruly post","メールアドレス":"post@example.invalid"}'
+        marker_sql: INSERT INTO public."顧客" ("氏名","メールアドレス") VALUES ('unruly marker','marker@example.invalid') RETURNING "番号"
+        row_filter: "%E7%95%AA%E5%8F%B7=eq.{id}"
+        update_body: '{"氏名":"unruly-updated"}'
+        update_check_sql: SELECT "氏名" FROM public."顧客" WHERE "番号"={id}
+        update_expect: unruly-updated
+        exists_check_sql: SELECT count(*) FROM public."顧客" WHERE "番号"={id}
+        cleanup_sql: DELETE FROM public."顧客" WHERE "メールアドレス" IN ('marker@example.invalid','post@example.invalid')
+
+    # No grant. The 401 body names the table in Japanese, so the relation is
+    # still discoverable and must not be reported as readable.
+    - name: 注文履歴
+      schema: public
+      rows: 6
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      authenticated_read_exposed: false
+    - name: パスワード保管
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [利用者名, パスワードハッシュ, 復旧コード]
+
+    # ---- Spanish ---------------------------------------------------------
+    - name: contraseñas
+      schema: public
+      rows: 3
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [usuario, contraseña_hash, clave_api]
+    # Card numbers and national ID numbers, behind no grant at all. The worst
+    # content in the project is the part a scanner must NOT report as exposed.
+    - name: información_personal
+      schema: public
+      rows: 4
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      sensitive_columns: [nombre_completo, número_de_tarjeta, correo_electrónico, número_de_documento]
+
+    # ---- Cyrillic --------------------------------------------------------
+    - name: пользователи
+      schema: public
+      rows: 8
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [имя_пользователя, электронная_почта, хеш_пароля]
+    - name: платежи
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 200
+      sensitive_columns: [номер_карты, сумма]
+
+    # ---- mixed script ----------------------------------------------------
+    # German, Japanese and Cyrillic in one identifier. Any per-language
+    # heuristic puts this in the wrong bucket or in none.
+    - name: benutzer_顧客_данные
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [氏名, passwort_hash, почта]
+
+    # ---- outside the BMP -------------------------------------------------
+    # MATHEMATICAL DOUBLE-STRUCK letters: four UTF-8 bytes each, a surrogate
+    # pair in UTF-16. It holds card numbers and CVVs, so a classifier that
+    # drops names it cannot represent drops the worst readable table here.
+    - name: 𝕂𝕒𝕣𝕥𝕖
+      schema: public
+      rows: 3
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [número_de_tarjeta, kartenprüfnummer, ablaufdatum]
+
+    # ---- the case pair ---------------------------------------------------
+    # Identical apart from the case of the first letter, and in OPPOSITE
+    # exposure states. A scanner that lower-cases before deduplicating reports
+    # one relation and is 50% right about it.
+    - name: Ünïcödé
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [clave_api]
+    - name: ünïcödé
+      schema: public
+      rows: 3
+      read_exposed: false
+      read_status: 200
+      sensitive_columns: [clave_api]
+
+    # The NFC half of the normalisation pair. Its twin is byte-different and
+    # forbidden, and both facts are asserted under expect.psql -- but neither
+    # was listed HERE, so a scan that correctly reported this table was scored
+    # as inventing it. The claim below is the same one psql already makes,
+    # written where a scorer comparing relation lists can see it.
+    - name: café_registro
+      schema: public
+      rows: 2
+      read_exposed: true
+      # 206, not 200: the verifier asks for an exact count, and a counted read
+      # of a non-empty relation is a partial response. Written as 200 first
+      # from a hand-made curl that asked for no count, and verify.sh said so.
+      read_status: 206
+      # No write claim: asserting one needs a probe block, and this relation
+      # exists to measure a normalisation pair rather than a verb.
+
+    # The normalisation pair is NOT listed here. Both names render
+    # identically, so two `name:` lines in this file would be visually the same
+    # and a normalising editor could silently collapse them. They are pinned
+    # instead by the psql checks above and by the percent-encoded HTTP checks
+    # below, which are unambiguous ASCII.
+
+  checks:
+    # OpenAPI is left ON in this project (project 09 is the one that turns it
+    # off), and it carries the non-ASCII names verbatim in UTF-8.
+    - name: the OpenAPI document names the Japanese relation
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "顧客"
+    - name: the OpenAPI document omits the relation with no grant
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: "注文履歴"
+
+    # The literal request a human can paste. The path is 顧客 percent-encoded
+    # and the filter is the primary key column 番号, also percent-encoded --
+    # PostgREST decodes the query string, so a non-ASCII column name is
+    # addressable the same way a non-ASCII relation name is.
+    #
+    # The filter is not decoration. An earlier version of this check used
+    # `limit=1` with no ordering and passed until a write probe rewrote a row
+    # and moved it in the heap; PostgREST returns rows in whatever order the
+    # scan produces, so "the first row" is not a stable fact about a target.
+    - name: the Japanese relation reads over a percent-encoded path
+      method: GET
+      path: /%E9%A1%A7%E5%AE%A2?select=*&%E7%95%AA%E5%8F%B7=eq.1
+      expect_status: 200
+      expect_body_contains: "kokyaku1@example.invalid"
+
+    # MEASURED on the response to the request above. PostgREST 14.3 echoes the
+    # request in a Content-Location header, and it double-encodes the non-ASCII
+    # COLUMN name while leaving the relation name raw: 番号 comes back as
+    # %C3%A7%C2%95%C2%AA%C3%A5%C2%8F%C2%B7, which is the UTF-8 bytes of 番号
+    # read as Latin-1 and re-encoded. Following the URL the server itself
+    # emitted is a 400: the column has been renamed to "ç" in transit.
+    #
+    # This is here because canonicalising a request against Content-Location is
+    # a normal thing for a crawler to do, and on this target it turns a working
+    # probe into a 400 that looks like the column does not exist.
+    - name: following the Content-Location PostgREST emits gives 400 42703
+      method: GET
+      path: /%E9%A1%A7%E5%AE%A2?select=%2A&%C3%A7%C2%95%C2%AA%C3%A5%C2%8F%C2%B7=eq.1
+      expect_status: 400
+      expect_body_contains: "42703"
+
+    # The 401 body carries the table name in its own script, so a forbidden
+    # relation is still discoverable and still non-ASCII.
+    - name: the forbidden Japanese relation is named by its own 401
+      method: GET
+      path: /%E6%B3%A8%E6%96%87%E5%B1%A5%E6%AD%B4
+      expect_status: 401
+      expect_body_contains: "注文履歴"
+
+    - name: a nonexistent non-ASCII relation is 404 PGRST205
+      method: GET
+      path: /%E5%AD%98%E5%9C%A8%E3%81%97%E3%81%AA%E3%81%84
+      expect_status: 404
+      expect_body_contains: "PGRST205"
+
+    # The normalisation pair over HTTP. Two different paths, two different
+    # relations, two different verdicts.
+    - name: the NFC cafe_registro is readable at caf%C3%A9_registro
+      method: GET
+      path: /caf%C3%A9_registro?select=*&limit=1
+      expect_status: 200
+      expect_body_contains: "forma compuesta NFC"
+    - name: the NFC path returns none of the NFD table's rows
+      method: GET
+      path: /caf%C3%A9_registro?select=*
+      expect_status: 200
+      expect_body_missing: "descompuesta"
+    - name: the NFD cafe_registro is forbidden at cafe%CC%81_registro
+      method: GET
+      path: /cafe%CC%81_registro?select=*&limit=1
+      expect_status: 401
+      expect_body_contains: "42501"
+    # MEASURED, and the reason this pair is in the corpus: the 401 error body
+    # for the NFD table renders as `café_registro`, byte-for-byte a different
+    # string from the NFC table's name but visually identical. Deduplicating a
+    # relation list by displayed name merges two relations in opposite
+    # exposure states into one.
+    - name: the NFD 401 renders the same name as the readable NFC relation
+      method: GET
+      path: /cafe%CC%81_registro
+      expect_status: 401
+      expect_body_contains: "permission denied for table caf"
+
+    # The case pair over HTTP. Same letters, different case, opposite states.
+    - name: the upper-case Ünïcödé returns its API keys
+      method: GET
+      path: /%C3%9Cn%C3%AFc%C3%B6d%C3%A9?select=*
+      expect_status: 200
+      expect_body_contains: "sk_test_upper"
+    - name: the lower-case ünïcödé returns an empty array
+      method: GET
+      path: /%C3%BCn%C3%AFc%C3%B6d%C3%A9?select=*
+      expect_status: 200
+      expect_body_contains: "[]"
+    - name: the lower-case ünïcödé leaks none of its own API keys
+      method: GET
+      path: /%C3%BCn%C3%AFc%C3%B6d%C3%A9?select=*
+      expect_status: 200
+      expect_body_missing: "sk_test_lower"
+
+    # The non-BMP name over HTTP, four bytes per character.
+    - name: the non-BMP relation reads at its 20-byte percent-encoded path
+      method: GET
+      path: /%F0%9D%95%82%F0%9D%95%92%F0%9D%95%A3%F0%9D%95%A5%F0%9D%95%96?select=*&limit=1
+      expect_status: 200
+      expect_body_contains: "4111111111111111"
+
+  unverified:
+    - claim: whether a scanner can even represent these names is untested here
+      why: >
+        This target proves the SERVER handles them: Postgres stores 16 distinct
+        identifiers across four scripts, and PostgREST routes every one of them
+        over a percent-encoded path, measured above. Whether a given scanner's
+        wordlist format, output format or deduplication survives them is a
+        property of the scanner, and the corpus does not run scanners.
+    - claim: no test of an identifier longer than the 63-BYTE limit
+      why: >
+        Postgres truncates identifiers at 63 BYTES, not 63 characters, so a
+        21-character Japanese name is already at the limit and a 16-character
+        one is not. The longest name here is 28 bytes. A truncation fixture
+        would be a different project; it is named here so the gap is on record.

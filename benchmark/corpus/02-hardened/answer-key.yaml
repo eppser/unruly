@@ -1,0 +1,465 @@
+# Ground truth for corpus project 02: the PRECISION anchor.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 02-hardened, which reads this file, performs the
+# writes it claims against a marker row inserted by psql, and reports any claim
+# that did not hold. Nothing here is inferred from the DDL.
+#
+# The one property this project measures that no other does: PRECISION. The
+# correct scan result for this target is NOTHING. Every finding produced here
+# is a false positive, and the target still has to be worth scanning -- five
+# relations, a REST mount, a real GoTrue, a storage mount, all reachable and
+# all answering.
+#
+# The one relation that IS anonymously readable, public_pages, is readable ON
+# PURPOSE. It is the single most likely false positive in the corpus, because
+# the crude rule "anon received rows from a table" fires on it.
+
+name: 02-hardened
+project_ref: bench-02
+base_url: http://127.0.0.1:54411
+# The MANAGED layout: one origin, Kong-shaped paths. PostgREST is not published
+# to the host at all -- the gateway is the only way in.
+rest_prefix: /rest/v1
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  Each relation is locked by a DIFFERENT mechanism, because the ways a scanner
+  can be wrong about "protected" are not interchangeable: a correct per-user
+  policy (member_notes, support_tickets), RLS with no policy at all
+  (rls_locked), and REVOKE with no grant at all (billing_internal). The fourth
+  case, public_pages, is not locked and is not meant to be.
+
+  escalation_gains is EMPTY and that is the interesting claim. member_notes and
+  support_tickets both return rows to an authenticated token and no rows to
+  anon, which is the exact signature project 04 uses for its escalation
+  findings. Here it is correct behaviour: the token sees its OWN two rows and
+  its OWN one ticket, and nobody else's. A scanner that reports every
+  authenticated-visible relation as an escalation produces two false positives
+  on this target.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    - name: public holds exactly 5 tables
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'"
+      expect: 5
+    # No RPC surface. The policy helper deliberately lives in the auth schema,
+    # which PostgREST is not configured to expose, so `routines: []` above is
+    # true because there are none rather than because the ones there are happen
+    # to be harmless.
+    - name: no routine exists in the exposed schema
+      sql: "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'"
+      expect: 0
+    - name: billing_internal holds no grant for anon or authenticated
+      sql: "SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema='public' AND table_name='billing_internal' AND grantee IN ('anon','authenticated')"
+      expect: 0
+    - name: public_pages grants SELECT only
+      sql: "SELECT string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type) FROM information_schema.role_table_grants WHERE table_schema='public' AND table_name='public_pages' AND grantee IN ('anon','authenticated')"
+      expect: SELECT
+    # The three RLS tables carry FULL CRUD grants on purpose. If they were
+    # revoked as well the policies would never be reached and this project
+    # would prove nothing about them: the table would be locked twice and the
+    # measurement would not be of the policy.
+    - name: the RLS-protected tables hold full CRUD grants, so the POLICY is what denies
+      sql: "SELECT count(*) FROM information_schema.role_table_grants WHERE table_schema='public' AND table_name IN ('member_notes','support_tickets','rls_locked') AND grantee IN ('anon','authenticated') AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')"
+      expect: 24
+    - name: rls_locked has RLS enabled and zero policies
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='rls_locked'"
+      expect: 0
+    - name: rls_locked really has the RLS bit set
+      sql: "SELECT relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='rls_locked'"
+      expect: t
+    # GoTrue creates auth.uid() itself, owned by supabase_auth_admin. Defining
+    # one here first breaks its migration with 42501 "must be owner of function
+    # uid", so the policy helper carries a different name. Both are asserted so
+    # that a future GoTrue version silently taking the name over is a failing
+    # claim rather than a silent behaviour change.
+    - name: GoTrue owns auth.uid, not this project
+      sql: "SELECT pg_get_userbyid(proowner) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='auth' AND p.proname='uid'"
+      expect: supabase_auth_admin
+    - name: the policy helper is a separate function owned by postgres
+      sql: "SELECT pg_get_userbyid(proowner) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='auth' AND p.proname='request_sub'"
+      expect: postgres
+    - name: GoTrue's auth.uid still reads the legacy GUC name first
+      sql: "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='auth' AND p.proname='uid' AND p.prosrc LIKE '%request.jwt.claim.sub%'"
+      expect: 1
+    # No account exists. Signup is off, so none can be created either.
+    - name: the auth database holds no users
+      sql: "SELECT count(*) FROM auth.users"
+      expect: 0
+
+  relations:
+    # ------------------------------------------------------------------
+    # A correct per-user policy. anon gets 0 rows and HTTP 200; the first
+    # authenticated identity gets its OWN two rows and neither of the other
+    # two owners'. Both halves are asserted -- the second under checks, with
+    # expect_body_missing, because a bare "authenticated saw something" bit
+    # cannot tell a correctly scoped table from a wide-open one.
+    # ------------------------------------------------------------------
+    - name: member_notes
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"owner_id":"22222222-2222-2222-2222-222222222222","title":"unruly post","body":"b"}'
+        marker_sql: "INSERT INTO public.member_notes (owner_id,title,body) VALUES ('22222222-2222-2222-2222-222222222222','unruly marker','b') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"title":"unruly-updated"}'
+        update_check_sql: "SELECT title FROM public.member_notes WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.member_notes WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.member_notes WHERE title IN ('unruly marker','unruly post','unruly-updated')"
+
+    # ------------------------------------------------------------------
+    # The same shape on a table users are meant to WRITE to. The WITH CHECK
+    # half is the one people leave off, and it is what stops an authenticated
+    # caller filing a ticket in somebody else's name -- measured under checks
+    # as a 403.
+    # ------------------------------------------------------------------
+    - name: support_tickets
+      schema: public
+      rows: 3
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"owner_id":"22222222-2222-2222-2222-222222222222","subject":"unruly post"}'
+        marker_sql: "INSERT INTO public.support_tickets (owner_id,subject) VALUES ('22222222-2222-2222-2222-222222222222','unruly marker') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"subject":"unruly-updated"}'
+        update_check_sql: "SELECT subject FROM public.support_tickets WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.support_tickets WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.support_tickets WHERE subject IN ('unruly marker','unruly post','unruly-updated')"
+
+    # ------------------------------------------------------------------
+    # RLS on, zero policies: deny-all, and it presents as 200 with an empty
+    # array rather than as an error. It holds a Stripe-shaped secret and an
+    # SMTP password, so a scanner ranking by content wants to report it.
+    # Nothing is reachable through any verb by any role.
+    # ------------------------------------------------------------------
+    - name: rls_locked
+      schema: public
+      rows: 3
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"name":"unruly post","value":"v"}'
+        marker_sql: "INSERT INTO public.rls_locked (name,value) VALUES ('unruly marker','v') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"name":"unruly-updated"}'
+        update_check_sql: "SELECT name FROM public.rls_locked WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.rls_locked WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.rls_locked WHERE name IN ('unruly marker','unruly post','unruly-updated')"
+
+    # ------------------------------------------------------------------
+    # Protected by REVOKE. RLS is NOT enabled on it, which is the point: a
+    # scanner reasoning "RLS disabled means exposed" reports it, and it is the
+    # least reachable relation in the project. Postgres refuses at the
+    # privilege layer with 42501 and PostgREST answers 401 to anon.
+    #
+    # It stays DISCOVERABLE -- the 401 body names the table -- while being
+    # absent from the OpenAPI document, both asserted under checks.
+    # ------------------------------------------------------------------
+    - name: billing_internal
+      schema: public
+      rows: 3
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [customer, card_number, iban]
+      probe:
+        post_body: '{"customer":"post@example.invalid","card_number":"4111111111111111","amount_cents":1}'
+        marker_sql: "INSERT INTO public.billing_internal (customer,card_number,amount_cents) VALUES ('marker@example.invalid','4111111111111111',1) RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"customer":"unruly-updated"}'
+        update_check_sql: "SELECT customer FROM public.billing_internal WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.billing_internal WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.billing_internal WHERE customer IN ('marker@example.invalid','post@example.invalid','unruly-updated')"
+
+    # ------------------------------------------------------------------
+    # THE TRAP. Anonymously readable, 4 rows, HTTP 206 -- and correct.
+    #
+    # Marketing copy for a site that renders it client-side straight out of
+    # PostgREST. RLS is enabled and carries an explicit FOR SELECT USING (true)
+    # so the intent is written down rather than implied, and only SELECT is
+    # granted, so the site cannot be edited by a stranger.
+    #
+    # No sensitive_columns are claimed because there are none: slug, headline,
+    # body_markdown, published_at. Nothing identifies a person.
+    #
+    # Reporting this relation is a FALSE POSITIVE.
+    # ------------------------------------------------------------------
+    - name: public_pages
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"slug":"unruly-post","headline":"h","body_markdown":"b","published_at":"2026-01-01"}'
+        marker_sql: "INSERT INTO public.public_pages (slug,headline,body_markdown,published_at) VALUES ('unruly-marker','h','b','2026-01-01') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"headline":"unruly-updated"}'
+        update_check_sql: "SELECT headline FROM public.public_pages WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.public_pages WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.public_pages WHERE slug IN ('unruly-marker','unruly-post')"
+
+  checks:
+    # --- discovery ---------------------------------------------------------
+    #
+    # The same asymmetry project 01 records: the OpenAPI document is built from
+    # GRANTs, so the four granted relations are listed and the REVOKEd one is
+    # not -- while a direct GET on it answers 401 and names it. The cheap
+    # discovery path systematically misses exactly the relations REVOKE
+    # protects.
+    - name: OpenAPI is served under the gateway prefix and names the public relation
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "public_pages"
+    - name: OpenAPI reports the Kong-shaped basePath, not PostgREST's root
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: '"basePath":"/rest/v1"'
+    - name: OpenAPI omits the relation held by REVOKE
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: "billing_internal"
+    - name: the REVOKEd relation is still named by its own 401
+      method: GET
+      path: /billing_internal
+      expect_status: 401
+      expect_body_contains: "permission denied for table billing_internal"
+    - name: a nonexistent relation is 404 PGRST205
+      method: GET
+      path: /no_such_relation_here
+      expect_status: 404
+      expect_body_contains: "PGRST205"
+
+    # --- the per-user policies, both directions ----------------------------
+    #
+    # A bare "the authenticated token saw rows" bit cannot tell a correctly
+    # scoped table from a wide-open one. These four checks can: the token gets
+    # its own rows and is refused the other two owners' rows on the same
+    # request.
+    - name: member_notes returns the caller's own rows to the caller
+      method: GET
+      path: /member_notes?select=title
+      role: authenticated
+      expect_status: 200
+      expect_body_contains: "Renewal reminder"
+    - name: member_notes withholds another owner's rows from the same caller
+      method: GET
+      path: /member_notes?select=title
+      role: authenticated
+      expect_status: 200
+      expect_body_missing: "Card on file"
+    - name: member_notes returns an empty array to anon
+      method: GET
+      path: /member_notes?select=title
+      expect_status: 200
+      expect_body_missing: "Renewal reminder"
+    - name: support_tickets withholds another owner's ticket from the caller
+      method: GET
+      path: /support_tickets?select=subject
+      role: authenticated
+      expect_status: 200
+      expect_body_missing: "Duplicate charge"
+
+    # The WITH CHECK half. An authenticated caller cannot file a ticket in
+    # somebody else's name: 403 with 42501. Measured, and it does NOT insert a
+    # row, so this project needs no reset hook.
+    - name: an authenticated caller cannot insert a row owned by another user
+      method: POST
+      path: /support_tickets
+      role: authenticated
+      body: '{"owner_id":"55555555-5555-5555-5555-555555555555","subject":"forged"}'
+      expect_status: 403
+      expect_body_contains: "new row violates row-level security policy"
+
+    # The trap, stated as a check so it is impossible to read this key and miss
+    # it: this content IS returned to anon, and that is the correct outcome.
+    - name: public_pages returns marketing copy to anon, by design
+      method: GET
+      path: /public_pages?select=headline
+      expect_status: 200
+      expect_body_contains: "Simple pricing that scales with you"
+
+    # --- GoTrue, measured rather than trusted ------------------------------
+    #
+    # Absolute URLs: lib/check.py prefixes a relative path with rest_prefix,
+    # which is /rest/v1 here.
+    - name: GET /auth/v1/settings reports signup disabled
+      method: GET
+      path: http://127.0.0.1:54411/auth/v1/settings
+      expect_status: 200
+      expect_body_contains: '"disable_signup":true'
+    - name: GET /auth/v1/settings reports autoconfirm off
+      method: GET
+      path: http://127.0.0.1:54411/auth/v1/settings
+      expect_status: 200
+      expect_body_contains: '"mailer_autoconfirm":false'
+    - name: GET /auth/v1/settings reports anonymous sign-in off
+      method: GET
+      path: http://127.0.0.1:54411/auth/v1/settings
+      expect_status: 200
+      expect_body_contains: '"anonymous_users":false'
+
+    # 422 signup_disabled, "Signups not allowed for this instance". The status
+    # and the error_code are both recorded because the corpus's other auth
+    # project answers 200 to the byte-identical request.
+    - name: POST /auth/v1/signup is refused
+      method: POST
+      path: http://127.0.0.1:54411/auth/v1/signup
+      body: '{"email":"blocked@example.invalid","password":"correct-horse-battery-staple"}'
+      expect_status: 422
+      expect_body_contains: "signup_disabled"
+    - name: the signup refusal names the reason in plain text
+      method: POST
+      path: http://127.0.0.1:54411/auth/v1/signup
+      body: '{"email":"blocked@example.invalid","password":"correct-horse-battery-staple"}'
+      expect_status: 422
+      expect_body_contains: "Signups not allowed for this instance"
+
+    # Anonymous sign-in: POST /signup with no email and no password. Refused
+    # with a DIFFERENT error code from the one above, which is how the two
+    # settings are told apart from outside.
+    - name: anonymous sign-in is refused with its own error code
+      method: POST
+      path: http://127.0.0.1:54411/auth/v1/signup
+      body: '{}'
+      expect_status: 422
+      expect_body_contains: "anonymous_provider_disabled"
+
+    # The other two ways to create an account without POST /signup.
+    - name: magic-link signup is refused too
+      method: POST
+      path: http://127.0.0.1:54411/auth/v1/otp
+      body: '{"email":"otp@example.invalid"}'
+      expect_status: 422
+      expect_body_contains: "signup_disabled"
+    # 403 not_admin, not 401. lib/check.py sends the anon key as BOTH apikey
+    # and Authorization: Bearer, so GoTrue finds a valid token and rejects it
+    # on role rather than on absence. With only the apikey header the same
+    # request answers 401 no_authorization. Which of the two a scanner sees is
+    # decided by its own header habits, not by the target.
+    - name: invite refuses a caller who is not an admin
+      method: POST
+      path: http://127.0.0.1:54411/auth/v1/invite
+      body: '{"email":"invite@example.invalid"}'
+      expect_status: 403
+      expect_body_contains: "not_admin"
+    - name: the admin user list refuses the anon key
+      method: GET
+      path: http://127.0.0.1:54411/auth/v1/admin/users
+      expect_status: 403
+      expect_body_contains: "not_admin"
+    - name: the admin user list refuses an authenticated key too
+      method: GET
+      path: http://127.0.0.1:54411/auth/v1/admin/users
+      role: authenticated
+      expect_status: 403
+      expect_body_contains: "not_admin"
+    - name: a password grant for a nonexistent account fails closed
+      method: POST
+      path: http://127.0.0.1:54411/auth/v1/token?grant_type=password
+      body: '{"email":"nobody@example.invalid","password":"correct-horse-battery-staple"}'
+      expect_status: 400
+      expect_body_contains: "invalid_grant"
+
+    # --- storage, refusing -------------------------------------------------
+    #
+    # These three are served by the gateway, not by storage-api. See the README
+    # and gateway.conf: the real service cannot switch roles correctly in this
+    # arrangement, and what a scanner consumes from storage is the response.
+    - name: listing buckets refuses the anon key
+      method: GET
+      path: http://127.0.0.1:54411/storage/v1/bucket
+      expect_status: 401
+      expect_body_contains: "Invalid JWT"
+    - name: an anonymous upload is refused by policy
+      method: POST
+      path: http://127.0.0.1:54411/storage/v1/object/public-uploads/probe.txt
+      body: 'unruly write probe'
+      expect_status: 403
+      expect_body_contains: "new row violates row-level security policy"
+    - name: no bucket serves an anonymous public read
+      method: GET
+      path: http://127.0.0.1:54411/storage/v1/object/public/public-uploads/probe.txt
+      expect_status: 400
+      expect_body_contains: "Bucket not found"
+
+    # --- the gateway itself ------------------------------------------------
+    - name: an unrouted path answers the way a managed gateway answers
+      method: GET
+      path: http://127.0.0.1:54411/nope
+      expect_status: 404
+      expect_body_contains: "no Route matched with those values"
+
+  unverified:
+    - claim: >
+        GOTRUE_PASSWORD_MIN_LENGTH is 12.
+      why: >
+        Not observable from outside, and that is the finding rather than a gap
+        in the method. Measured: signup with a 5-character password, signup
+        with no password field at all, and POST /auth/v1/otp all answer the
+        identical 422 signup_disabled -- GoTrue refuses on the signup switch
+        before it ever validates a password. With signup off there is no
+        request that can distinguish a 12-character floor from a 6-character
+        one, so a scanner cannot report the password policy of this target
+        either way, and must not guess.
+    - claim: >
+        The storage mount belongs to a real storage-api.
+        It does not: /storage/v1 is served by the nginx gateway.
+      why: >
+        storage-api switches database role per request, and a role-level
+        search_path is applied at LOGIN rather than on SET ROLE, so its own
+        tables stop resolving in this arrangement -- the same trade
+        fixtures/lab/gateway.conf records. The RESPONSES are what a scanner
+        reasons about and those are real; the service behind them is a stub,
+        and no claim in this file should be read as evidence about storage-api
+        itself.
+    - claim: >
+        PostgREST is unreachable from the host except through the gateway.
+      why: >
+        Measured only as an absence -- `docker compose port rest 3000` returns
+        no mapping and the compose file publishes no port for it. That
+        establishes there is no port mapping, not that no other route exists,
+        and lib/check.py has no way to express a negative reachability claim.

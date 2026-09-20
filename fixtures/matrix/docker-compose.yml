@@ -1,0 +1,37 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# DIRECTORY name, so two checkouts of this repository on one machine both
+# produce a project called "lab" and silently reuse each other's containers
+# and volumes — which presents as a database with no tables and initdb
+# reporting "ignoring /docker-entrypoint-initdb.d/*".
+#
+# Note the fixtures bind FIXED host ports, so only one checkout can run them
+# at a time. That is deliberate: the eval targets record those ports, and a
+# scan is meant to be reproducible from the committed answer key.
+name: unruly-matrix
+
+# Hardened counterpart to fixtures/lab. Same stack, correct configuration.
+# Runs on different ports so both fixtures can be up at once.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54349:5432"]
+    volumes: ["./schema:/docker-entrypoint-initdb.d:ro"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54341:3000"]

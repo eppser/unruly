@@ -1,0 +1,38 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so two checkouts would share containers and volumes and each
+# would see the other's database.
+name: unruly-bench-16
+
+# Bare PostgREST at the ROOT. This project varies one thing -- what the data IS
+# -- and every relation in it is deliberately reachable, so a gateway would add
+# an axis that has nothing to do with the question being asked.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54552:5432"]
+    volumes:
+      # Mounted FILE BY FILE: the postgres entrypoint matches on extension and
+      # logs a subdirectory as "ignoring", which presents as a database with
+      # correct roles and no tables.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54551:3000"]

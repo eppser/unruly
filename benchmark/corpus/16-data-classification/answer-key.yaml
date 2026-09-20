@@ -1,0 +1,257 @@
+# Ground truth for corpus project 16: what the report SAYS is in the data.
+#
+# The one property this project measures that no other does: DATA
+# CLASSIFICATION, across the whole published vocabulary, by both classifiers,
+# in both directions.
+#
+# Every other project asks whether a relation is reachable. Here that is held
+# almost constant -- seven of the eight tables are plainly readable by anyone --
+# and the question is what the finding says the relation HOLDS. That is a
+# different failure with a different cost: a scanner can have perfect recall on
+# reachability and still describe a table of diagnoses and national identifiers
+# as data with nothing recognised in it, which decides whether the finding is
+# read at all.
+#
+# Three parts, and the second and third are the ones that fail silently:
+#
+#   1. employees, payslips, absence_records, auth_users -- the class is in the
+#      COLUMN NAME. English, ordinary, the case a name classifier exists for.
+#   2. gehaltsdaten -- the column names are GERMAN and match nothing, so only
+#      the sampled VALUES can carry the answer. A scanner with one classifier
+#      reports this relation as readable and says nothing about what is in it,
+#      and no other project in this corpus would notice.
+#   3. payout_methods, api_usage -- LOOKALIKES, where the correct answer is
+#      that no class is reported. Without these the project would reward a
+#      scanner that labels everything.
+#
+# Every number below was measured against the running stack on 2026-08-23, not
+# read off the DDL:
+#   - row counts by `SELECT count(*)` in psql
+#   - read status and Content-Range by curl with `Prefer: count=exact` and
+#     `Range: 0-0`, which is the request check.py issues
+#   - the IBAN verified to satisfy mod-97 independently (remainder 1), because
+#     the financial class on gehaltsdaten depends on it and an IBAN that did
+#     not check out would make that cell pass for the wrong reason
+#   - the absence of any card-shaped digit run in the two lookalike tables
+#     confirmed by a regex query in psql, so their empty class list is a
+#     measurement rather than an assumption
+
+name: 16-data-classification
+project_ref: bench-16
+base_url: http://127.0.0.1:54551
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  All data is synthetic. The domain is .invalid (RFC 2606, guaranteed never to
+  resolve), the addresses are documented example addresses, the IP and MAC
+  ranges are the documentation ranges from RFC 5737 and RFC 7042, and the IBAN
+  is the standard test IBAN from the ISO 13616 registry. Nothing here belongs
+  to anybody.
+
+# No write claims. Every relation here is granted SELECT only, deliberately:
+# this project varies what the data IS, and adding a write axis would let a
+# write failure explain a classification result. Writes are project 01's
+# variable.
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    - name: public holds exactly 8 tables
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'"
+      expect: 8
+    # The design: exactly one table is protected, so precision has a
+    # denominator and the project is not made only of things to report.
+    - name: exactly 1 table has RLS enabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity"
+      expect: 1
+    - name: salary_bands has zero policies, so RLS denies every row
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='salary_bands'"
+      expect: 0
+    - name: every table is granted to anon, so reachability is never the variable
+      sql: "SELECT count(DISTINCT table_name) FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee='anon'"
+      expect: 8
+
+    # --- the premise of part 2, asserted ------------------------------
+    # If any of these three stopped holding, the German table would stop
+    # measuring the value classifier and would start measuring the name one.
+    - name: gehaltsdaten has no column name an English rule could match
+      sql: "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='gehaltsdaten' AND (column_name ~* '(email|phone|address|iban|card|password|token|name|birth|ssn|tax|passport)')"
+      expect: 0
+    - name: gehaltsdaten.kontonummer holds an IBAN-shaped value
+      sql: "SELECT count(*) FROM gehaltsdaten WHERE kontonummer ~ '^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$'"
+      expect: 2
+    # Kept as a claim even though it produces NO class, because the reason it
+    # produces none is a decision worth pinning: the address is inside a
+    # sentence and its domain is reserved. If either changed, the class list
+    # above would silently become wrong.
+    - name: gehaltsdaten.notiz mentions an email inside prose, not as the whole value
+      sql: "SELECT count(*) FROM gehaltsdaten WHERE notiz ~ '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+' AND notiz !~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$'"
+      expect: 1
+    - name: every email in the fixture is at a reserved domain, so none may be classified
+      sql: "SELECT count(*) FROM gehaltsdaten WHERE notiz ~ '@' AND notiz !~ '(example|invalid|test|localhost)'"
+      expect: 0
+
+    # --- the premise of part 3, asserted ------------------------------
+    # The lookalike tables must contain nothing a value rule could legitimately
+    # fire on, or their empty class lists would be measuring the wrong thing.
+    - name: no card-shaped digit run anywhere in payout_methods
+      sql: "SELECT count(*) FROM payout_methods WHERE ip_address ~ '[0-9]{13,19}' OR mac_address ~ '[0-9]{13,19}' OR wallet_address ~ '\\y[0-9]{13,19}\\y' OR contract_address ~ '\\y[0-9]{13,19}\\y'"
+      expect: 0
+    - name: no email anywhere in api_usage
+      sql: "SELECT count(*) FROM api_usage WHERE display_name ~ '@' OR file_name ~ '@' OR condition ~ '@' OR status ~ '@'"
+      expect: 0
+
+  relations:
+    # ==================================================================
+    # PART 1: the class is in the column name.
+    # ==================================================================
+
+    # Four classes in one table, which is also the ordinary case: personal
+    # data does not arrive sorted by category.
+    - name: employees
+      schema: public
+      rows: 3
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [first_name, last_name, date_of_birth, email, phone, home_address, postcode, national_id]
+      classes: [contact, government-id, location, pii]
+
+    # government-id is separated from pii on purpose. A leaked email is a
+    # nuisance; a leaked tax or passport number is an identity-theft
+    # primitive, and a report that calls both "personal details" makes the
+    # operator work out which one they have.
+    - name: payslips
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [iban, bank_account, tax_id]
+      classes: [financial, government-id]
+
+    # health had no rule at all until 2026-08-23: the renderer could print
+    # "health information" and nothing could produce it. This is the relation
+    # that would have shown that, and nothing in the corpus did.
+    - name: absence_records
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [diagnosis, medication, blood_type, allergies]
+      classes: [health]
+
+    - name: auth_users
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [password_hash, recovery_code, totp_secret]
+      classes: [credential]
+
+    # ==================================================================
+    # PART 2: the column names say nothing and the values say everything.
+    # ==================================================================
+
+    # THE HEADLINE. sensitive_columns is deliberately EMPTY -- not omitted --
+    # because "no column name matches" is the premise, and the psql claims
+    # above assert it rather than trusting this list.
+    #
+    # A scanner that classifies only by column name reports this relation as
+    # readable, describes its contents as nothing in particular, and passes
+    # every other project in this corpus.
+    # MEASURED 2026-08-23, and the first draft of this key got it wrong.
+    #
+    # It expected [contact, financial], on the reasoning that notiz holds an
+    # email address. The scan reported financial only, and the scanner is
+    # RIGHT for two independent and deliberate reasons:
+    #
+    #   1. reEmail is anchored ^...$ -- "an address that IS the value of a
+    #      field is a record about a person", where an address mentioned
+    #      inside a sentence is prose. notiz holds "Rueckfragen an
+    #      lohn@example.invalid", so it is prose.
+    #   2. .invalid is on the reserved-domain list, which exists precisely
+    #      because seed and demo data use those domains and flagging them
+    #      would report a placeholder as a person's contact details.
+    #
+    # Both are precision decisions this project agrees with, so the key moved
+    # rather than the code. It is recorded here because the corpus rule is
+    # that ground truth is established WITHOUT running the scanner, and this
+    # is the case where doing that produced a wrong expectation -- the value
+    # of the rule is that the disagreement surfaced instead of being written
+    # into the answer key from the scanner's own output.
+    #
+    # CONSEQUENCE, stated rather than hidden: contact-by-VALUE is not
+    # exercised anywhere in this corpus and cannot be, because every domain
+    # safe to commit to a public repository is a reserved domain the
+    # classifier deliberately ignores. Testing it would mean committing an
+    # address at a domain that could belong to somebody.
+    - name: gehaltsdaten
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: []
+      classes: [financial]
+
+    # ==================================================================
+    # PART 3: lookalikes. The correct answer is silence.
+    # ==================================================================
+
+    # Every column ends in a word a careless rule treats as personal data, and
+    # every one identifies a machine, a mailbox or a blockchain account. All
+    # four were classified as personal data by this scanner until 2026-08-23.
+    #
+    # The relation IS reported -- it is readable and that is true -- and its
+    # class list must be empty.
+    - name: payout_methods
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: []
+      classes: []
+
+    # Counts that read like secrets and labels that read like names. The token
+    # columns are the shape this project's reference target is full of, which
+    # is why the credential rule anchors on the suffix; display_name and
+    # file_name are why the name rule demands a qualified name; condition and
+    # treatment_cost are ordinary business words a health rule must not
+    # swallow.
+    - name: api_usage
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: []
+      classes: []
+
+    # ==================================================================
+    # The protected control.
+    # ==================================================================
+
+    # RLS on, granted, no policy: 200 with an empty array, and a count of zero
+    # in Content-Range even though the table holds two rows. Must not be
+    # reported at all, which is what gives precision a denominator here.
+    - name: salary_bands
+      schema: public
+      rows: 2
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false

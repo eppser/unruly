@@ -1,0 +1,50 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so `11-multi-schema` from two checkouts would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-11
+
+# Bare PostgREST at the ROOT, no gateway. What makes this project different is
+# not the layout but PGRST_DB_SCHEMAS: four schemas are served from one origin,
+# and PostgREST selects between them by CONTENT NEGOTIATION (Accept-Profile on
+# reads, Content-Profile on writes) rather than by a path segment. There is no
+# /api/users URL here; there is /users with a header.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54502:5432"]
+    volumes:
+      # Mounted FILE BY FILE, not as a directory. The postgres entrypoint
+      # iterates /docker-entrypoint-initdb.d/* and matches on extension; a
+      # subdirectory falls through to the catch-all and is logged as
+      # "ignoring", which presents as a database with correct roles and no
+      # tables. Lexical order is the ordering guarantee.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_public.sql:/docker-entrypoint-initdb.d/01_public.sql:ro
+      - ./schema/02_api.sql:/docker-entrypoint-initdb.d/02_api.sql:ro
+      - ./schema/03_legacy.sql:/docker-entrypoint-initdb.d/03_legacy.sql:ro
+      - ./schema/04_reporting.sql:/docker-entrypoint-initdb.d/04_reporting.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      # ORDER IS SEMANTIC. The FIRST entry is the schema a request with no
+      # Accept-Profile header is answered from. `public` is first here on
+      # purpose: it keeps the default the same as every single-schema project
+      # in the corpus, so the only variable this project introduces is the
+      # existence of the other three.
+      PGRST_DB_SCHEMAS: public,api,legacy,reporting
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports: ["54501:3000"]

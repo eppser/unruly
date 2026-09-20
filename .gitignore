@@ -1,0 +1,97 @@
+/unruly
+# The tool's FORMER name. Renaming the tool renamed this rule with it, which
+# left a 16MB build of the old binary suddenly un-ignored -- and it was swept
+# into "rename the tool to unruly" and has shipped in every clone since.
+# Kept so the artifact cannot come back, and as the concrete reason this
+# repository does not use `git add -A`: the rule that would have caught the
+# file had just been renamed out from under it.
+/supabasemap
+# A file literally named "-u", 124 bytes of scanner output. It arrived in
+# 6f9508c ("test(docs): every command in the documentation must parse") beside
+# a test that only PARSES commands and never runs one -- so it was not that
+# test's doing. It was a stray from a hand-run scan swept in by a
+# non-explicit add, exactly as the 16MB supabasemap binary above was.
+#
+# Two accidental files from the same cause is why `git add -A` is not used
+# here. A leading dash also makes it awkward to remove by hand, which is how
+# it survived: `rm -u` is not a command, it is a flag.
+/-u
+/dist/
+*.out
+*.jsonl
+fixtures/lab/supabase/.temp/
+fixtures/lab/supabase/.branches/
+# Fixture credentials. Pattern-based on purpose: this was previously a list of
+# individual paths, and every fixture added after it was written slipped
+# through — three .jwt files reached the repository that way. A rule that must
+# be extended for each new file fails open, which is the wrong direction for a
+# rule about credentials.
+*.jwt
+.secrets/
+fixtures/supabase-lab/app/build/
+cover.out
+# Anchored, for the same reason as audit-report.md below: as a bare pattern
+# this matched cmd/coveraudit/ as well as the compiled binary, so the SOURCE
+# of the coverage auditor was absent from every clone -- and `make
+# audit-offline`, the command a fork is told to run, failed on it.
+/coveraudit
+# Anchored at the repository root ON PURPOSE. As a bare pattern this matched
+# at any depth, so docs/audit-report.md -- the report docs/auditing.md tells
+# auditors to read -- was silently untracked and absent from every clone.
+/audit-report.md
+audit-logs/
+fixtures/lab/site/
+fixtures/lab/preview/
+fixtures/lab/archive/
+dist/
+
+# Build artifacts. The exploitcheck binary was tracked for months: 9 MB of
+# compiled output rewritten on every build, which is how a commit claiming to
+# add an audit report actually contained a rebuilt binary and nothing else.
+/exploitcheck
+/unruly
+
+# Third-party scan data. ~100 MB of harvested prospect URLs, per-site reports
+# and study runs, sitting inside the working tree because the study was run
+# from here. It is a separate git repository, which is the only reason a
+# `git add -A` has not already pulled it in -- git skips nested repos rather
+# than refusing. Remove that inner .git and the next add commits other
+# people's scan results into an OSS scanner. Named explicitly so the outcome
+# does not depend on that accident.
+/supabase-prospects/
+.DS_Store
+
+# Batch-scan output. Two independent reasons, either one sufficient:
+#
+# Findings are proof-carrying by design, so a run directory holds real rows
+# copied out of whatever was scanned. And run.json carries the local fixture's
+# anon JWT -- a throwaway minted for 127.0.0.1, but the CI secret scan matches
+# on shape and cannot know that. It reached a commit once via `git add -A`, in
+# the same commit that added the rule above.
+scan/runs/
+benchmark-runner
+
+# PocketBase fixture runtime state: the binary is fetched by setup.sh and the
+# instances are provisioned from it. Nothing here is source.
+fixtures/pocketbase/bin/
+fixtures/pocketbase/*_data/
+fixtures/pocketbase/*_migrations/
+fixtures/pocketbase/*.log
+.mutate.lock
+
+# Cloud Functions fixture dependencies: installed to deploy, never committed.
+node_modules/
+
+# Python bytecode, from importing scripts/mutate.py in a helper.
+__pycache__/
+*.pyc
+/estate
+experiments/rls-agents/runs/
+
+# Everything not for publication lives under one ignored directory.
+#
+# ONE line, and deliberately generic. .gitignore is itself published, so an
+# entry naming `shodan-prospects.csv` or `firebase-lab/` would disclose the
+# thing it exists to hide. A single opaque prefix discloses nothing and is the
+# only rule a reviewer has to check.
+/private/

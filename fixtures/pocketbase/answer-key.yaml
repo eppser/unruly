@@ -1,0 +1,74 @@
+# PocketBase lab ground truth, for exploitation rather than detection.
+#
+# backend/pocketbase's lab tests already grade RECALL: given collections whose
+# rules were set by fixtures/pocketbase/setup.sh, does the prober name them
+# correctly. They do not answer the harder question -- can anybody actually DO
+# the thing the finding claims -- because the scanner performs the retrieval
+# they check. That is why both PocketBase findings sat at `pending` in
+# docs/exploitability.md.
+#
+# This key drives internal/exploit, which imports nothing from the scanner. The
+# rules below are transcribed from setup.sh, which is the fixture's own source
+# of truth, not from what the scanner reports about it.
+
+project_ref: pocketbase-lab
+base_url: http://127.0.0.1:8090
+notes: >
+  Local PocketBase, started by fixtures/pocketbase/setup.sh with a pinned
+  binary. Ports are chosen at run time, so base_url is overridden by the
+  harness; the collection names and rules are what matter here.
+
+exploits:
+  - id: public-notes-anon-read
+    technique: read
+    collection: public_notes
+    class: anonymous read
+    why: >
+      listRule and viewRule are both the empty string, which in PocketBase
+      means the rule passes for everyone including an unauthenticated caller.
+      This is the shape an operator creates by clicking "anyone" in the admin
+      UI and is the most common PocketBase mistake.
+    proof: GET /api/collections/public_notes/records returns records with no Authorization header
+    scanner_finding: pocketbase-anon-read-exposed
+
+  - id: open-write-anon-read
+    technique: read
+    collection: open_write
+    class: anonymous read
+    why: >
+      every rule is the empty string, so the collection is readable as well as
+      writable. It is listed here for the READ because that is what this key's
+      read technique establishes; the write exposure is a separate claim.
+    proof: GET returns records with no credential
+    scanner_finding: pocketbase-anon-read-exposed
+
+  - id: authed-only-signup-escalation
+    technique: escalate
+    collection: authed_only
+    class: what a signed-up user gains
+    why: >
+      the rule is @request.auth.id != "", so the collection answers 200 with an
+      empty items array to a stranger -- byte-identical to an empty collection
+      -- and returns rows to any account that exists. users.createRule ships as
+      the empty string, so anybody can make one.
+    proof: >
+      the same GET returns nothing without a token and records with a token for
+      an account registered seconds earlier
+    scanner_finding: pocketbase-authenticated-escalation
+
+# Collections that must NOT be reported. A scanner that flags these is trading
+# precision for recall, and on PocketBase the trap is specific: view_only has
+# an open viewRule and a null listRule, so "a rule is open" is not the same as
+# "the collection can be listed".
+protected:
+  - relation: locked_notes
+    why: every rule is null, which in PocketBase means superuser-only
+  - relation: view_only
+    why: >
+      viewRule is open but listRule is null. A single record can be fetched by
+      id; the collection cannot be listed. Reporting it as readable would be a
+      false positive that reads as data exposure.
+  - relation: open_create
+    why: >
+      createRule is open but every read rule is null, so it accepts records and
+      returns none. This is the write-without-read shape, not a read exposure.

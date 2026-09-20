@@ -1,0 +1,191 @@
+# Ground truth for corpus project 05: a project with nothing in it.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 05-empty-project. Nothing here is inferred from
+# the DDL.
+#
+# The one property this project measures that no other does: the correct
+# answer is the EMPTY answer. There are zero relations on the exposed schema,
+# so every relation a scanner reports against this target is a false positive,
+# and a scan that errors out instead of returning an empty result is also
+# wrong. The `expect.relations` list below is empty on purpose.
+
+name: 05-empty-project
+project_ref: bench-05
+base_url: http://127.0.0.1:54441
+# Bare PostgREST at the root: the self-hosted layout, as in project 01.
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  The host is alive and correct, not dead. GET / serves a valid OpenAPI 2.0
+  document, it just has one path in it (the document itself) and no
+  `definitions` block at all. Probes for common names answer 404 PGRST205,
+  which is the "this relation does not exist" signal and is distinguishable
+  from the 401/42501 a REVOKE-protected relation gives in project 01.
+
+  The second half of the project is the schema `internal`: three tables named
+  users, profiles and payments, holding 14, 9 and 7 rows, with USAGE and
+  SELECT granted to anon. They are unreachable because PGRST_DB_SCHEMAS says
+  `public` and nothing else. psql proves the data is there; every HTTP path to
+  it answers 404 or 406.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  # No relations. This is the claim.
+  relations: []
+
+  psql:
+    - name: the exposed schema holds zero relations of any kind
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','v','m','f','p')"
+      expect: 0
+    - name: no routines in the exposed schema either
+      sql: "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'"
+      expect: 0
+    - name: anon holds USAGE on the exposed schema
+      sql: "SELECT has_schema_privilege('anon','public','USAGE')"
+      expect: t
+
+    # The unexposed half. These rows exist and are countable from inside.
+    - name: internal.users holds 14 rows
+      sql: "SELECT count(*) FROM internal.users"
+      expect: 14
+    - name: internal.profiles holds 9 rows
+      sql: "SELECT count(*) FROM internal.profiles"
+      expect: 9
+    - name: internal.payments holds 7 rows
+      sql: "SELECT count(*) FROM internal.payments"
+      expect: 7
+
+    # And anon is allowed to read them, at the DATABASE level. The barrier is
+    # entirely PGRST_DB_SCHEMAS. An auditor reasoning from catalog privileges
+    # would report three exposures here; from outside there are none.
+    - name: anon holds USAGE on the unexposed schema
+      sql: "SELECT has_schema_privilege('anon','internal','USAGE')"
+      expect: t
+    - name: anon holds SELECT on internal.users
+      sql: "SELECT has_table_privilege('anon','internal.users','SELECT')"
+      expect: t
+    - name: anon holds SELECT on internal.payments
+      sql: "SELECT has_table_privilege('anon','internal.payments','SELECT')"
+      expect: t
+
+  checks:
+    # Alive and correct. A dead host would prove nothing about a scanner's
+    # handling of the empty case.
+    - name: the OpenAPI document is served to anon and is valid
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: '"swagger":"2.0"'
+
+    # MEASURED. With zero relations PostgREST emits the introspection path and
+    # nothing else, and omits the `definitions` key entirely rather than
+    # emitting an empty object. A consumer that indexes into `definitions`
+    # without checking gets a KeyError here, which is one of the two ways a
+    # scanner fails this target.
+    - name: the OpenAPI document names no relation
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: definitions
+
+    - name: the OpenAPI document does not mention the unexposed table names
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: users
+
+    # The tempting names. Each of these EXISTS in Postgres, in a schema that
+    # is not exposed. Over HTTP each is 404 PGRST205, the same answer a name
+    # that exists nowhere gets.
+    - name: users answers 404 PGRST205
+      method: GET
+      path: /users
+      expect_status: 404
+      expect_body_contains: PGRST205
+    - name: profiles answers 404 PGRST205
+      method: GET
+      path: /profiles
+      expect_status: 404
+      expect_body_contains: PGRST205
+    - name: payments answers 404 PGRST205
+      method: GET
+      path: /payments
+      expect_status: 404
+      expect_body_contains: PGRST205
+
+    # A name that exists in no schema of this database answers identically, so
+    # the 404 carries no information about the unexposed schema.
+    - name: a name that exists nowhere answers the same 404 PGRST205
+      method: GET
+      path: /no_such_relation_here
+      expect_status: 404
+      expect_body_contains: PGRST205
+
+    # Not a 401. That is the distinction the whole corpus turns on: 404
+    # PGRST205 means absent, 401 with 42501 means present and forbidden
+    # (project 01). Nothing on this target produces a 42501.
+    - name: the absent relation does not answer with a privilege error
+      method: GET
+      path: /users
+      expect_status: 404
+      expect_body_missing: "42501"
+
+    - name: a write probe finds nothing to write to
+      method: POST
+      path: /users
+      body: '{"email":"probe@example.invalid"}'
+      expect_status: 404
+      expect_body_contains: PGRST205
+
+    - name: an RPC probe answers PGRST202, the routine equivalent
+      method: POST
+      path: /rpc/version
+      body: '{}'
+      expect_status: 404
+      expect_body_contains: PGRST202
+
+    # A better token does not produce a relation. Emptiness is not a
+    # privilege artefact here.
+    - name: the authenticated role sees the same empty project
+      method: GET
+      path: /users
+      role: authenticated
+      expect_status: 404
+      expect_body_contains: PGRST205
+
+    # Content negotiation is the only other way in, and it is closed.
+    - name: asking for the unexposed schema by profile is refused with PGRST106
+      method: GET
+      path: /users
+      headers:
+        Accept-Profile: internal
+      expect_status: 406
+      expect_body_contains: PGRST106
+    - name: the profile refusal does not leak whether the schema exists
+      method: GET
+      path: /users
+      headers:
+        Accept-Profile: no_such_schema_at_all
+      expect_status: 406
+      expect_body_contains: "Invalid schema: no_such_schema_at_all"
+
+  unverified:
+    - claim: no relation is reachable under ANY name, not merely the names probed here
+      why: >
+        Nonexistence is a universal claim and HTTP can only sample it. What is
+        checked is that the exposed schema holds zero relations in pg_class
+        (psql, from inside), which is the same claim stated where it is
+        decidable, plus seven negative HTTP samples.

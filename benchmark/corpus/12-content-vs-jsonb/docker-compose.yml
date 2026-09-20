@@ -1,0 +1,48 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so `12-content-vs-jsonb` from two checkouts would share
+# containers and volumes and each would see the other's database.
+name: unruly-bench-12
+
+# Bare PostgREST at the ROOT, no gateway.
+#
+# Nothing about the LAYOUT is interesting in this project. Nine relations are
+# world-readable and none of them is protected in any way, so every exposure
+# question here has the same answer and the only remaining question is which of
+# them matters. That is the whole target.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    ports: ["54512:5432"]
+    volumes:
+      # Mounted FILE BY FILE, not as a directory. The postgres entrypoint
+      # iterates /docker-entrypoint-initdb.d/* and matches on extension; a
+      # subdirectory falls through to the catch-all and is logged as
+      # "ignoring", which presents as a database with correct roles and no
+      # tables.
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_cms.sql:/docker-entrypoint-initdb.d/01_cms.sql:ro
+      - ./schema/02_events.sql:/docker-entrypoint-initdb.d/02_events.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      # No PGRST_DB_MAX_ROWS. A bare GET returns the whole relation, so the
+      # sensitive rows ARE in the default response for anyone who reads all of
+      # it. What the answer key measures is the sampling probe — limit=1, the
+      # shape almost every scanner uses — which does not.
+    ports: ["54511:3000"]

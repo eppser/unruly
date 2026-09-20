@@ -1,0 +1,53 @@
+# Compose project name is explicit. Without it Docker derives it from the
+# directory name, so two checkouts of `08-rate-limited` would share containers
+# and volumes and each would see the other's database.
+name: unruly-bench-08
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+      POSTGRES_DB: fixture
+    # Published, and deliberately NOT behind the limiter. The answer key pins
+    # ground truth with psql on this port precisely because the HTTP answers
+    # are non-deterministic; a target whose truth can only be sampled through
+    # the thing under test cannot be an answer key.
+    ports: ["54472:5432"]
+    volumes:
+      - ../lib/00_roles.sql:/docker-entrypoint-initdb.d/00_roles.sql:ro
+      - ./schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # NOT published to the host. There is no unthrottled way in: every HTTP
+  # request in this project goes through the limiter in conf/throttle.conf.
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v14.3
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:fixture@db:5432/fixture
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    expose: ["3000"]
+
+  proxy:
+    image: nginx:alpine
+    depends_on: [rest]
+    volumes:
+      - ./conf/throttle.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: ["54471:80"]
+    healthcheck:
+      # Asks for a relation that cannot exist, so the health probe never
+      # competes with a real read for the token bucket's opinion of what a
+      # useful answer is. 404 and 429 are both "nginx is up".
+      test: ["CMD-SHELL", "wget -q -O /dev/null -T 2 http://127.0.0.1/ || true"]
+      interval: 3s
+      timeout: 4s
+      retries: 20

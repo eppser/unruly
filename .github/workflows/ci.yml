@@ -1,0 +1,119 @@
+name: ci
+
+# Two jobs, split on what they need rather than on what they test.
+#
+# `offline` needs nothing: no Docker, no network, no credentials. It is the job
+# a fork can run, and it must stay that way — an offline suite that quietly
+# needs a container is not an offline suite, which this project has already
+# learned once when a fixture-backed eval escaped its UNRULY_LIVE gate and
+# hard-failed `make test` the first time it met a stopped daemon.
+#
+# `fixtures` brings up the five compose projects and grades against them. It
+# needs Docker but still no credentials and no cloud account.
+#
+# The exploit-lab evals are not here and not in this repository. They ran
+# against a live Supabase project and a deployed Cloudflare Worker, needed
+# secrets a fork cannot have, and would fail for everyone else in a way that
+# says nothing about their change. What survives publication is their ANSWER
+# KEYS, under fixtures/, because docs/exploitability.md marks a finding proven
+# only when a key exploits it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          check-latest: true
+      - name: build
+        run: go build ./...
+      - name: lint (checks, never rewrites)
+        run: make lint-check
+      - name: vet
+        run: go vet ./...
+      - name: offline tests under the race detector
+        # Offline on purpose: with UNRULY_LIVE=1 the remediation eval
+        # applies REVOKE to the lab fixture and every later eval in the same
+        # process sees an empty database, which is why `make eval` runs
+        # remediation last after its own reset.
+        run: make race
+      - name: offline tests
+        # UNRULY_LIVE is deliberately unset. Every fixture-backed eval
+        # skips without it, so this job proves the offline suite really is
+        # offline rather than merely usually offline.
+        run: go test ./...
+      - name: cross-compiled binaries
+        # "Single static binary" and "the win is distribution" are
+        # requirements, and the release path was never exercised: a dependency
+        # needing cgo, or a lost CGO_ENABLED=0, would have surfaced on release
+        # day. A fork can run this -- no Docker, no credentials.
+        run: make release-check
+
+      - name: mutation testing
+        # Coverage says a line ran; this says a test would notice if it were
+        # wrong. Two decisions were unchecked when it was first run: whether the
+        # probe actually deletes the row it creates, and whether a routine whose
+        # callability was never established outranks one proven callable.
+        run: make mutation
+
+      - name: no credentials in the tree
+        # Content-based, not filename-based. A previous leak was a truncated
+        # JWT inside a committed benchmark output, which a filename rule for
+        # *.jwt did not catch.
+        run: |
+          if git grep -nIE 'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.' -- . ':!*_test.go' ':!docs/*'; then
+            echo "a JWT-shaped string is committed"; exit 1
+          fi
+          # Tests are exempt for the same reason the JWT rule above exempts
+          # them: proving that -redact removes a secret requires a string
+          # shaped like one. The exemption is on the PATH, not the pattern, so
+          # a real key outside a test still fails this gate.
+          if git grep -nIE 'sb_secret_[A-Za-z0-9_-]{8,}' -- . ':!*_test.go'; then
+            echo "a secret key is committed"; exit 1
+          fi
+
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          check-latest: true
+      - name: start fixtures
+        run: make fixtures-up
+      - name: reset fixtures to seed state
+        run: make fixtures-reset
+      - name: recall and precision
+        run: make eval-fixtures
+      - name: edge functions against the real runtime
+        run: make eval-edge
+      - name: precision against hosts that are not Supabase
+        run: make eval-notsupabase
+      - name: redaction
+        run: make eval-redaction
+      - name: remediation worked examples
+        run: make eval-templates
+      - name: exit-code contract
+        run: make eval-exitcode
+      - name: determinism
+        run: make eval-determinism
+      - name: every finding's emit site is executed
+        run: make eval-coverage
+      - name: exploits land and the scan agrees with them
+        run: make eval-exploit-local
+      - name: remediation closes the findings
+        run: make eval-remediation
+      - name: stop fixtures
+        if: always()
+        run: make fixtures-down

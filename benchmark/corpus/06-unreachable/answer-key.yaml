@@ -1,0 +1,174 @@
+# Ground truth for corpus project 06: the target cannot be scanned.
+#
+# Every line below was measured against the running stack by
+# benchmark/corpus/verify.sh 06-unreachable. The status codes and error
+# strings are what a Python HTTP client actually observed, not what the RFCs
+# say should happen.
+#
+# The one property this project measures that no other does: UNREACHABLE is
+# not CLEAN. There are no relations here to find, and that is not a finding.
+# A scanner that reports "no issues" against any of these three ports has told
+# an operator that a host is safe when it never spoke to the host at all.
+#
+# base_url points at the port that actually answers (54453), so that
+# `rest_prefix` has something to be relative to. Every check uses an absolute
+# URL, because the three modes live on three different ports and the point of
+# the project is the difference between them.
+
+name: 06-unreachable
+project_ref: bench-06
+base_url: http://127.0.0.1:54453
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+
+notes: >
+  Three modes, measured:
+
+  54451, nothing listening. TCP connect fails. The client reports status 0 and
+  "[Errno 61] Connection refused" (errno 111 on Linux, same text).
+
+  54452, nginx `return 444`. TCP connect SUCCEEDS, the request is written and
+  accepted, and the server closes without sending a status line. The client
+  reports status 0 and "Remote end closed connection without response". This
+  is the mode that defeats a liveness gate: the socket opened.
+
+  54453, nginx proxying to a dead upstream. Fully reachable, answers every
+  request with 502 text/html from nginx. No JSON, no PostgREST error code, no
+  schema. Reachable and unmeasurable are different things.
+
+  Plus a DNS failure against a .invalid hostname, which RFC 2606 reserves as
+  guaranteed-not-to-resolve.
+
+# The port named above answers 502 by design, and a benchmark that waits for a
+# healthy response before scanning waits forever: the first version of the
+# scorer timed out after 90 seconds and skipped this project entirely -- the
+# one project built to check that a scan which cannot look says so.
+answers_with_5xx: true
+
+expect:
+  # 3, not 0. The exit-code contract is the one part of a report a machine
+  # reads, and this target is the case it exists for: nothing here can be
+  # measured, so a scan that exits 0 tells CI the project is clean. 2 would be
+  # wrong too -- there are no findings to report.
+  exit_code: 3
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: []
+
+  # No database, no relations, nothing to enumerate. The absence here is
+  # UNMEASURED, not measured-and-empty. That is the whole difference between
+  # this project and project 05, which is the same empty list for the opposite
+  # reason.
+  relations: []
+
+  checks:
+    # ---- mode 1: nothing listening -------------------------------------
+    - name: 54451 root -- connection refused, no HTTP status at all
+      method: GET
+      path: http://127.0.0.1:54451/
+      expect_status: 0
+      expect_body_contains: Connection refused
+    - name: 54451 rest path -- same refusal, the path is never reached
+      method: GET
+      path: http://127.0.0.1:54451/rest/v1/users
+      expect_status: 0
+      expect_body_contains: Connection refused
+    # Distinguishes mode 1 from mode 2: the socket never opened.
+    - name: 54451 is not the drop case
+      method: GET
+      path: http://127.0.0.1:54451/
+      expect_status: 0
+      expect_body_missing: Remote end closed
+
+    # ---- mode 2: accepts, then drops -----------------------------------
+    - name: 54452 root -- connection accepted, then closed with no response
+      method: GET
+      path: http://127.0.0.1:54452/
+      expect_status: 0
+      expect_body_contains: Remote end closed connection without response
+    - name: 54452 rest path -- same, the request was accepted and answered with nothing
+      method: GET
+      path: http://127.0.0.1:54452/rest/v1/users
+      expect_status: 0
+      expect_body_contains: Remote end closed connection without response
+    # The load-bearing assertion of this project. Mode 2 does NOT produce a
+    # connection refusal, which is the proof that the TCP handshake completed
+    # and that a liveness check gating on "can I connect" passes here.
+    - name: 54452 is reachable at the transport layer -- no refusal
+      method: GET
+      path: http://127.0.0.1:54452/
+      expect_status: 0
+      expect_body_missing: Connection refused
+    - name: 54452 returns no PostgREST error code to mistake for an answer
+      method: GET
+      path: http://127.0.0.1:54452/rest/v1/users
+      expect_status: 0
+      expect_body_missing: PGRST
+
+    # ---- mode 3: answers, but not with a backend -----------------------
+    - name: 54453 root -- 502 from nginx
+      method: GET
+      path: http://127.0.0.1:54453/
+      expect_status: 502
+      expect_body_contains: 502 Bad Gateway
+    - name: 54453 rest path -- the same 502, so the path carries no information
+      method: GET
+      path: http://127.0.0.1:54453/rest/v1/users
+      expect_status: 502
+      expect_body_contains: 502 Bad Gateway
+    - name: 54453 serves nginx HTML, not JSON
+      method: GET
+      path: http://127.0.0.1:54453/
+      expect_status: 502
+      expect_header:
+        Content-Type: text/html
+    # A 502 is not a 404. Reading it as "relation absent" is the mode-3
+    # version of calling an unreachable host clean.
+    - name: 54453 does not answer with a relation-absent code
+      method: GET
+      path: http://127.0.0.1:54453/rest/v1/users
+      expect_status: 502
+      expect_body_missing: PGRST205
+    - name: 54453 POST is refused the same way -- write probes measure nothing either
+      method: POST
+      path: http://127.0.0.1:54453/rest/v1/users
+      body: '{"email":"probe@example.invalid"}'
+      expect_status: 502
+      expect_body_contains: 502 Bad Gateway
+
+    # ---- mode 4: name does not resolve ---------------------------------
+    # .invalid is reserved by RFC 2606 and cannot resolve. Only the status is
+    # asserted: the resolver's error text is libc-specific ("nodename nor
+    # servname provided" on macOS, "Name or service not known" on glibc), so
+    # asserting it would make this key fail on a different machine for a
+    # reason that has nothing to do with the target.
+    - name: an unresolvable .invalid hostname -- status 0, no HTTP exchange
+      method: GET
+      path: http://unruly-bench-06-no-such-host.invalid/rest/v1/users
+      expect_status: 0
+      expect_body_missing: Connection refused
+    - name: the DNS failure is not the drop case either
+      method: GET
+      path: http://unruly-bench-06-no-such-host.invalid/rest/v1/users
+      expect_status: 0
+      expect_body_missing: Remote end closed
+
+  unverified:
+    - claim: 54452 completes the TCP three-way handshake
+      why: >
+        Asserted indirectly. The checker speaks HTTP, not sockets, so what is
+        measured is that 54452 produces "Remote end closed connection without
+        response" and NOT "Connection refused" -- a distinction that only
+        exists once a connection has been established. A direct socket test
+        during development confirmed connect() succeeds on 54452 and raises
+        ECONNREFUSED on 54451, and that 54452 then returns zero bytes.
+    - claim: the correct scanner verdict is "unmeasured" rather than "clean"
+      why: >
+        That is a claim about a REPORT, not about a target, and this engine
+        only observes targets. What the key can pin down is the input side:
+        the exact wire behaviour of all four modes. Grading the verdict is the
+        benchmark harness's job, not this file's.

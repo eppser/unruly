@@ -1,0 +1,304 @@
+# Ground truth for corpus project 07: a proxy that strips PostgREST's error
+# semantics and moves the API to a path nobody guesses.
+#
+# Every line below was measured against the running stack by
+# benchmark/corpus/verify.sh 07-rewriting-proxy. Several of the checks at the
+# bottom of this file record behaviour the proxy was CONFIGURED to prevent and
+# does not; see the README.
+#
+# The one property this project measures that no other does: the 401/42501
+# ("exists, forbidden") versus 404/PGRST205 ("does not exist") distinction is
+# destroyed in the status line and the response body, while the readable
+# relations pass through completely intact. Discovery has to survive without
+# the error codes.
+
+name: 07-rewriting-proxy
+project_ref: bench-07
+base_url: http://127.0.0.1:54461
+# Neither / nor /rest/v1. An API-gateway route or a Next.js rewrite, which is
+# what a real deployment in front of Supabase looks like.
+rest_prefix: /api/db/v2/
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  nginx runs with `proxy_intercept_errors on` and
+  `error_page 401 403 404 = @generic`, so every upstream 401, 403 and 404
+  arrives as 403 with the body {"error":"request could not be completed",
+  "ref":"gw"}. Measured: the 403 for a REVOKE-protected relation and the 403
+  for a name that exists in no schema are byte-identical in status line and
+  body.
+
+  2xx is untouched, Content-Range included, so row counts are still
+  measurable. PostgREST itself is not published to the host; the proxy is the
+  only way in.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    # The ground truth the proxy is hiding. billing_accounts EXISTS.
+    - name: billing_accounts exists in the exposed schema
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='billing_accounts'"
+      expect: 1
+    - name: no_such_table_xyz exists nowhere in this database
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='no_such_table_xyz'"
+      expect: 0
+    - name: anon holds no SELECT on billing_accounts
+      sql: "SELECT has_table_privilege('anon','public.billing_accounts','SELECT')"
+      expect: f
+    # The third shape: privilege granted, RLS on, no policy. Postgres filters
+    # rather than refusing, so the query SUCCEEDS with zero rows and the proxy
+    # never sees a 4xx to rewrite.
+    - name: session_tokens has RLS enabled
+      sql: "SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='session_tokens'"
+      expect: t
+    - name: session_tokens has zero policies
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='session_tokens'"
+      expect: 0
+    - name: anon does hold SELECT on session_tokens
+      sql: "SELECT has_table_privilege('anon','public.session_tokens','SELECT')"
+      expect: t
+
+  relations:
+    # Readable, dull. Proves reads work through the prefix at all, so a
+    # failure elsewhere cannot be blamed on the proxy.
+    - name: press_releases
+      schema: public
+      rows: 12
+      read_exposed: true
+      read_status: 206
+
+    # Readable, and worth finding. The proxy degrades none of this: 18 rows of
+    # reporter email addresses, phone numbers and internal notes, one
+    # anonymous GET away. A scanner that gives up on this target because the
+    # error codes are gone misses all of it.
+    - name: support_tickets
+      schema: public
+      rows: 18
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [reporter_email, reporter_phone, internal_note]
+
+    # RLS on, no policy, SELECT granted. Measured: HTTP 200 with an empty
+    # array and Content-Range */0. Not a 4xx, so the proxy leaves it alone and
+    # the relation stays discoverable through it. Eight rows are in the table.
+    - name: session_tokens
+      schema: public
+      rows: 8
+      read_exposed: false
+      read_status: 200
+      sensitive_columns: [token]
+
+    # REVOKE-protected. Behind a bare PostgREST this is 401 with SQLSTATE
+    # 42501 and the table names itself in the message (project 01). Here the
+    # status is 403 and the SQLSTATE is gone: there is no `code` key in the
+    # body at all, which is what read_sqlstate: "" asserts.
+    - name: billing_accounts
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 403
+      read_sqlstate: ""
+
+  checks:
+    # ---- the prefix ----------------------------------------------------
+    - name: the origin serves an app shell, not an API
+      method: GET
+      path: http://127.0.0.1:54461/
+      expect_status: 200
+      expect_body_missing: swagger
+    - name: the managed prefix is not where the API is
+      method: GET
+      path: http://127.0.0.1:54461/rest/v1/support_tickets
+      expect_status: 404
+      expect_body_missing: PGRST
+    - name: bare relation names at the root are nginx 404s, not PostgREST 404s
+      method: GET
+      path: http://127.0.0.1:54461/support_tickets
+      expect_status: 404
+      expect_body_missing: PGRST205
+
+    # ---- discovery that survives ---------------------------------------
+    # The OpenAPI document is a 200, so the proxy passes it through whole.
+    # Every readable relation is named in it. This is the discovery path that
+    # the rewriting does not touch.
+    - name: the OpenAPI document is served through the prefix
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: support_tickets
+    - name: the OpenAPI document omits the relation anon holds no privilege on
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_missing: billing_accounts
+    # MEASURED, and a trap: the document describes the UPSTREAM's own view of
+    # itself, so it advertises a basePath and host that do not exist from
+    # outside. Following them leads to 0.0.0.0:3000, which is unroutable.
+    - name: the OpenAPI document advertises the wrong mount point
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: '"basePath":"/"'
+
+    # ---- 2xx passes through untouched, headers included ----------------
+    # Load-bearing. If Content-Range were dropped or rewritten, row counts
+    # would stop being measurable and this would be a different target.
+    - name: Content-Range survives the proxy for press_releases
+      method: GET
+      path: /press_releases?select=*
+      headers:
+        Prefer: count=exact
+        Range: 0-0
+      expect_status: 206
+      expect_header:
+        Content-Range: 0-0/12
+    - name: Content-Range survives the proxy for support_tickets
+      method: GET
+      path: /support_tickets?select=*
+      headers:
+        Prefer: count=exact
+        Range: 0-0
+      expect_status: 206
+      expect_header:
+        Content-Range: 0-0/18
+    - name: the readable relation really returns its rows through the prefix
+      method: GET
+      path: /support_tickets?select=reporter_email&limit=1
+      expect_status: 200
+      expect_body_contains: "@example.invalid"
+
+    # ---- the rewriting: existence is undecidable from status + body ----
+    - name: the protected relation answers 403 with the gateway body
+      method: GET
+      path: /billing_accounts
+      expect_status: 403
+      expect_body_contains: request could not be completed
+    - name: the protected relation leaks no SQLSTATE
+      method: GET
+      path: /billing_accounts
+      expect_status: 403
+      expect_body_missing: "42501"
+    - name: the protected relation is not named in its own refusal
+      method: GET
+      path: /billing_accounts
+      expect_status: 403
+      expect_body_missing: billing_accounts
+    - name: a name that exists nowhere answers with the identical 403 body
+      method: GET
+      path: /no_such_table_xyz
+      expect_status: 403
+      expect_body_contains: request could not be completed
+    - name: the nonexistent name leaks no PGRST205
+      method: GET
+      path: /no_such_table_xyz
+      expect_status: 403
+      expect_body_missing: PGRST205
+    - name: a second nonexistent name behaves the same, so this is not one-off
+      method: GET
+      path: /users
+      expect_status: 403
+      expect_body_contains: request could not be completed
+
+    # ---- side channels the rewriting does NOT close ---------------------
+    # Configured to be indistinguishable; measured to be distinguishable by
+    # three independent channels. See the README. These are asserted because
+    # a benchmark that recorded the intent rather than the behaviour would be
+    # scoring scanners against a target that does not exist.
+
+    # A. nginx replaces the status and the body, and forwards the upstream's
+    #    response HEADERS. PostgREST's 401 carries WWW-Authenticate: Bearer;
+    #    its 404 does not. One anonymous GET resolves existence.
+    - name: side channel A -- the protected relation forwards WWW-Authenticate
+      method: GET
+      path: /billing_accounts
+      expect_status: 403
+      expect_header:
+        WWW-Authenticate: Bearer
+    - name: side channel A -- the nonexistent name does not
+      method: GET
+      path: /no_such_table_xyz
+      expect_status: 403
+      expect_header:
+        WWW-Authenticate: ""
+    # The channel closes for a request carrying a real JWT: PostgREST answers
+    # 403 rather than 401 for a named role, and 403 has no challenge header.
+    - name: side channel A closes for the authenticated role
+      method: GET
+      path: /billing_accounts
+      role: authenticated
+      expect_status: 403
+      expect_header:
+        WWW-Authenticate: ""
+
+    # B. error_page names 401, 403 and 404. It does not name 400, so every
+    #    PostgREST 400 passes through verbatim -- and a 400 names the table.
+    - name: side channel B -- a bogus column in a POST leaks the table name
+      method: POST
+      path: /billing_accounts
+      body: '{"zzz_probe":1}'
+      expect_status: 400
+      expect_body_contains: billing_accounts
+    - name: side channel B -- and leaks the PostgREST error code with it
+      method: POST
+      path: /billing_accounts
+      body: '{"zzz_probe":1}'
+      expect_status: 400
+      expect_body_contains: PGRST204
+    - name: side channel B -- the same probe against a nonexistent name is rewritten
+      method: POST
+      path: /no_such_table_xyz
+      body: '{"zzz_probe":1}'
+      expect_status: 403
+      expect_body_contains: request could not be completed
+    - name: side channel B -- a bogus select column leaks SQLSTATE 42703
+      method: GET
+      path: /billing_accounts?select=zzz_probe
+      expect_status: 400
+      expect_body_contains: "42703"
+
+    # C. OPTIONS on an existing relation is a 200 and is not intercepted;
+    #    OPTIONS on a nonexistent one is the 403. A one-request existence
+    #    oracle that touches no data at all.
+    - name: side channel C -- OPTIONS on the protected relation is 200
+      method: OPTIONS
+      path: /billing_accounts
+      expect_status: 200
+    - name: side channel C -- OPTIONS on a nonexistent name is the generic 403
+      method: OPTIONS
+      path: /no_such_table_xyz
+      expect_status: 403
+
+  unverified:
+    - claim: the protected and nonexistent responses are byte-identical
+      why: >
+        The engine has no primitive for "response A equals response B"; each
+        is asserted separately (same status, same body substring, neither
+        naming a code). Checked by hand during development with two GETs
+        compared in Python: identical status 403, identical 53-byte body,
+        identical Content-Type. They differ only in the WWW-Authenticate
+        header, which side channel A asserts directly.
+    - claim: the correct verdict for this target is NON-DISCRIMINATING for existence
+      why: >
+        That is a claim about a scanner's report, not about the target, and
+        this engine only observes targets. What is pinned down here is both
+        halves of the input: the ground truth from psql (billing_accounts
+        exists, no_such_table_xyz does not) and the wire behaviour that makes
+        the two indistinguishable on the GET status-and-body channel. A
+        grader can score either behaviour against those.
+    - claim: no fourth side channel exists
+      why: >
+        Universal negatives are not measurable by sampling. Three were found
+        by looking; the search was not exhaustive, and the presence of three
+        is itself the reason to doubt the intent of the configuration rather
+        than the finding.

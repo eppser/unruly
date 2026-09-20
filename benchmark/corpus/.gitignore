@@ -1,0 +1,7 @@
+# Written by lib/check.py on every run: the raw status codes, SQLSTATEs and
+# row counts behind each verdict. Useful while debugging a project, and not
+# something to commit — it is an OUTPUT of the corpus, and a stale copy in the
+# tree would read as evidence for claims nobody re-ran.
+evidence.jsonl
+# Minted at verify time, never committed. See verify.sh.
+*.jwt

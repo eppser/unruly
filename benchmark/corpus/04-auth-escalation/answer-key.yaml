@@ -1,0 +1,468 @@
+# Ground truth for corpus project 04: data that is invisible to anon and fully
+# readable by anyone who signs up.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 04-auth-escalation, which reads this file,
+# performs the writes it claims against a marker row inserted by psql, and
+# reports any claim that did not hold. Nothing here is inferred from the DDL.
+#
+# The one property this project measures that no other does: an anon-only scan
+# reports this target PROTECTED and the correct answer is PUBLIC. Every
+# relation answers `anon` with HTTP 200 and an empty array. Four of the five
+# hand every row to any token carrying role=authenticated, and GoTrue here
+# issues one of those to anybody who sends a single HTTP request -- with an
+# email nobody checks, or with no email at all.
+#
+# The Postgres side of this project is NOT misconfigured. Read the DDL alone
+# and it looks careful. The exposure is one setting in a different service.
+
+name: 04-auth-escalation
+project_ref: bench-04
+base_url: http://127.0.0.1:54431
+rest_prefix: /rest/v1
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+notes: >
+  authenticated_read_exposed below is measured with the corpus's own
+  authenticated token (sub 22222222-...), which is minted offline and never
+  passed through GoTrue. That measures the POLICY. It does not measure that a
+  stranger can obtain such a token, which is the other half of the finding and
+  is measured separately by the signup checks -- and end to end by setup.sh,
+  because lib/check.py cannot carry an access_token from one response into the
+  next request. See expect.unverified and the README transcript.
+
+  my_payslips is the control. Same RLS bit, same TO authenticated, same grants
+  as the four exposed relations, and its rows are owned by uuids that no token
+  in this corpus carries and no signup can produce -- GoTrue assigns each new
+  account a fresh random uuid. A scanner that reports it alongside the other
+  four is wrong about it, and the escalation claim would be vacuous without it.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: [employee_salaries, health_notes, internal_directory, device_inventory]
+  schemas: [public]
+
+  psql:
+    - name: public holds exactly 5 tables
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'"
+      expect: 5
+    - name: every table has RLS enabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT c.relrowsecurity"
+      expect: 0
+    # Every policy names `authenticated` and none names `anon`. That is why an
+    # anon-only scan reports this project clean: the privilege layer is wide
+    # open to anon and RLS denies it everywhere.
+    - name: no policy anywhere names anon
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND 'anon' = ANY(roles)"
+      expect: 0
+    - name: every policy names authenticated
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND NOT ('authenticated' = ANY(roles))"
+      expect: 0
+    # 5 tables x 4 verbs x 2 roles. Privileges are uniform and generous, so the
+    # policy is the only thing deciding anything.
+    - name: the privilege grid is uniform and full
+      sql: "SELECT count(DISTINCT grantee||privilege_type||table_name) FROM information_schema.role_table_grants WHERE table_schema='public' AND grantee IN ('anon','authenticated') AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')"
+      expect: 40
+    # Four policies say USING (true) -- any row to any account. One does not.
+    - name: exactly four policies have an unconditional USING clause
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND qual='true'"
+      expect: 4
+    - name: the control relation's policy is scoped to the caller
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='my_payslips' AND qual LIKE '%request_sub%'"
+      expect: 1
+    # setup.sh truncates auth.users, so this is the state a scanner meets: no
+    # account exists, and the checks below create one anyway.
+    - name: no account exists before the scan
+      sql: "SELECT count(*) FROM auth.users"
+      expect: 0
+    - name: no routine exists in the exposed schema
+      sql: "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'"
+      expect: 0
+
+  relations:
+    # ------------------------------------------------------------------
+    # FOR SELECT TO authenticated USING (true). The USING clause is `true`, not
+    # a predicate about the caller, so the policy means "any row, to any
+    # account". Salaries, national-ID fragments, bank-account fragments.
+    #
+    # read_exposed false / authenticated_read_exposed true is the signature
+    # this project is about, and on its own it is NOT a finding -- project 02
+    # produces the identical signature from a correctly scoped table. What
+    # makes it a finding here is that anyone can obtain the token, which the
+    # checks below measure.
+    # ------------------------------------------------------------------
+    - name: employee_salaries
+      schema: public
+      rows: 6
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [employee_email, full_name, annual_salary_cents, national_id_last4, bank_account_last4]
+      probe:
+        post_body: '{"employee_email":"post@example.invalid","full_name":"unruly post","job_title":"j","annual_salary_cents":1}'
+        marker_sql: "INSERT INTO public.employee_salaries (employee_email,full_name,job_title,annual_salary_cents) VALUES ('marker@example.invalid','unruly marker','j',1) RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"full_name":"unruly-updated"}'
+        update_check_sql: "SELECT full_name FROM public.employee_salaries WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.employee_salaries WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.employee_salaries WHERE employee_email IN ('marker@example.invalid','post@example.invalid')"
+
+    # ------------------------------------------------------------------
+    # Same policy shape, clinical data. Present because impact and exposure are
+    # separate axes: this relation is exactly as reachable as device_inventory
+    # below and is not remotely as bad to lose.
+    # ------------------------------------------------------------------
+    - name: health_notes
+      schema: public
+      rows: 4
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [patient_email, full_name, diagnosis, medication, clinician_note]
+      probe:
+        post_body: '{"patient_email":"post@example.invalid","full_name":"unruly post","recorded_on":"2026-01-01","diagnosis":"d"}'
+        marker_sql: "INSERT INTO public.health_notes (patient_email,full_name,recorded_on,diagnosis) VALUES ('marker@example.invalid','unruly marker','2026-01-01','d') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"full_name":"unruly-updated"}'
+        update_check_sql: "SELECT full_name FROM public.health_notes WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.health_notes WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.health_notes WHERE patient_email IN ('marker@example.invalid','post@example.invalid')"
+
+    # ------------------------------------------------------------------
+    # Home addresses, personal phone numbers, next of kin. The staff directory
+    # is the table people are least likely to think of as sensitive and the one
+    # that most reliably turns up in a doxxing complaint.
+    # ------------------------------------------------------------------
+    - name: internal_directory
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      sensitive_columns: [full_name, personal_email, home_address, mobile_number, emergency_contact]
+      probe:
+        post_body: '{"full_name":"unruly post","work_email":"post@example.invalid","home_address":"h","mobile_number":"m"}'
+        marker_sql: "INSERT INTO public.internal_directory (full_name,work_email,home_address,mobile_number) VALUES ('unruly marker','marker@example.invalid','h','m') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"full_name":"unruly-updated"}'
+        update_check_sql: "SELECT full_name FROM public.internal_directory WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.internal_directory WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.internal_directory WHERE work_email IN ('marker@example.invalid','post@example.invalid')"
+
+    # ------------------------------------------------------------------
+    # The same exposure, low impact. Here so that "everything
+    # authenticated-visible is a critical" is a claim the corpus can falsify.
+    # No sensitive_columns are claimed because there are none: asset tags,
+    # models, purchase dates, storeroom names.
+    # ------------------------------------------------------------------
+    - name: device_inventory
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: true
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"asset_tag":"AST-POST","model":"m","purchased_on":"2026-01-01","location":"l"}'
+        marker_sql: "INSERT INTO public.device_inventory (asset_tag,model,purchased_on,location) VALUES ('AST-MARKER','m','2026-01-01','l') RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"model":"unruly-updated"}'
+        update_check_sql: "SELECT model FROM public.device_inventory WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.device_inventory WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.device_inventory WHERE asset_tag IN ('AST-MARKER','AST-POST')"
+
+    # ------------------------------------------------------------------
+    # THE CONTROL. Correctly owner-scoped, and therefore NOT an escalation.
+    #
+    # authenticated_read_exposed is FALSE, and that is the whole point: same
+    # RLS bit, same TO authenticated, same grants as the four above. Every row
+    # is owned by a uuid no token in this corpus carries and no signup can
+    # produce, so the corpus token sees nothing here and so does a freshly
+    # created account (setup.sh asserts the second one).
+    # ------------------------------------------------------------------
+    - name: my_payslips
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 200
+      authenticated_read_exposed: false
+      insert_reachable: false
+      update_reachable: false
+      delete_reachable: false
+      probe:
+        post_body: '{"owner_id":"aaaaaaaa-0000-0000-0000-00000000000a","period":"unruly post","gross_cents":1,"net_cents":1}'
+        marker_sql: "INSERT INTO public.my_payslips (owner_id,period,gross_cents,net_cents) VALUES ('aaaaaaaa-0000-0000-0000-00000000000a','unruly marker',1,1) RETURNING id"
+        row_filter: "id=eq.{id}"
+        update_body: '{"period":"unruly-updated"}'
+        update_check_sql: "SELECT period FROM public.my_payslips WHERE id={id}"
+        update_expect: "unruly-updated"
+        exists_check_sql: "SELECT count(*) FROM public.my_payslips WHERE id={id}"
+        cleanup_sql: "DELETE FROM public.my_payslips WHERE period IN ('unruly marker','unruly post','unruly-updated')"
+
+  checks:
+    # --- what anon can and cannot see --------------------------------------
+    - name: employee_salaries returns an empty array to anon
+      method: GET
+      path: /employee_salaries?select=full_name
+      expect_status: 200
+      expect_body_missing: "Priya Raghunathan"
+    - name: health_notes returns an empty array to anon
+      method: GET
+      path: /health_notes?select=diagnosis
+      expect_status: 200
+      expect_body_missing: "Hypertension"
+    - name: internal_directory returns an empty array to anon
+      method: GET
+      path: /internal_directory?select=home_address
+      expect_status: 200
+      expect_body_missing: "Imaginary Lane"
+
+    # The same three requests with a role=authenticated token return
+    # everything. This is the policy half of the finding.
+    - name: employee_salaries returns every row to any account
+      method: GET
+      path: /employee_salaries?select=full_name,annual_salary_cents
+      role: authenticated
+      expect_status: 200
+      expect_body_contains: "Priya Raghunathan"
+    - name: health_notes returns every row to any account
+      method: GET
+      path: /health_notes?select=full_name,diagnosis
+      role: authenticated
+      expect_status: 200
+      expect_body_contains: "Hypertension"
+    - name: internal_directory returns every row to any account
+      method: GET
+      path: /internal_directory?select=full_name,home_address,mobile_number
+      role: authenticated
+      expect_status: 200
+      expect_body_contains: "Imaginary Lane"
+
+    # The control, from the same token that just read everything else.
+    - name: my_payslips returns nothing to that same account
+      method: GET
+      path: /my_payslips?select=period,net_cents
+      role: authenticated
+      expect_status: 200
+      expect_body_missing: "2026-01"
+
+    # Discovery is free: grants are uniform, so the OpenAPI document lists all
+    # five relations to anon INCLUDING the four it will not return a row from.
+    # Enumeration says nothing about exposure here.
+    - name: OpenAPI lists the salary table to anon
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "employee_salaries"
+    - name: OpenAPI lists the control relation too
+      method: GET
+      path: /
+      expect_status: 200
+      expect_body_contains: "my_payslips"
+
+    # --- GoTrue, measured over HTTP rather than read from compose ----------
+    #
+    # Absolute URLs: lib/check.py prefixes a relative path with rest_prefix.
+    - name: GET /auth/v1/settings reports signup ENABLED
+      method: GET
+      path: http://127.0.0.1:54431/auth/v1/settings
+      expect_status: 200
+      expect_body_contains: '"disable_signup":false'
+    - name: GET /auth/v1/settings reports autoconfirm ON
+      method: GET
+      path: http://127.0.0.1:54431/auth/v1/settings
+      expect_status: 200
+      expect_body_contains: '"mailer_autoconfirm":true'
+    - name: GET /auth/v1/settings reports anonymous sign-in ENABLED
+      method: GET
+      path: http://127.0.0.1:54431/auth/v1/settings
+      expect_status: 200
+      expect_body_contains: '"anonymous_users":true'
+    # GoTrue is published directly as well, so the same facts are reachable
+    # without the gateway in the way.
+    - name: the same settings are served on the directly published auth port
+      method: GET
+      path: http://127.0.0.1:54433/settings
+      expect_status: 200
+      expect_body_contains: '"disable_signup":false'
+
+    # A SIX-character password is accepted, and the account is usable
+    # immediately: the response carries an access_token, so no mailbox is
+    # involved. That is GOTRUE_MAILER_AUTOCONFIRM=true proved by consequence
+    # rather than by reading the setting back.
+    - name: signup with a six-character password succeeds and returns a session
+      method: POST
+      path: http://127.0.0.1:54431/auth/v1/signup
+      body: '{"email":"bench04-weak6@example.invalid","password":"abcdef"}'
+      expect_status: 200
+      expect_body_contains: "access_token"
+      # The token is carried into the four checks below. Until lib/check.py
+      # grew capture/${var}, this claim could only be made by hand and then
+      # asserted from memory in a key -- which is the failure the corpus exists
+      # to avoid. It is now measured on every run.
+      capture:
+        name: signupToken
+        json_key: access_token
+
+    # ---- the escalation, end to end ---------------------------------------
+    #
+    # A caller who started with nothing but the anon key now holds a token
+    # GoTrue minted, and reads data that was invisible one request ago. These
+    # four checks are the project's headline claim.
+    - name: the signup token reads every salary
+      method: GET
+      path: http://127.0.0.1:54431/rest/v1/employee_salaries?select=*
+      headers:
+        Authorization: "Bearer ${signupToken}"
+      expect_status: 200
+      expect_body_contains: "salary_cents"
+
+    - name: the signup token reads the health notes
+      method: GET
+      path: http://127.0.0.1:54431/rest/v1/health_notes?select=*
+      headers:
+        Authorization: "Bearer ${signupToken}"
+      expect_status: 200
+      expect_body_contains: "diagnosis"
+
+    - name: the signup token reads the internal directory
+      method: GET
+      path: http://127.0.0.1:54431/rest/v1/internal_directory?select=*
+      headers:
+        Authorization: "Bearer ${signupToken}"
+      expect_status: 200
+      expect_body_contains: "home_address"
+
+    # The control, on the same token in the same run. Without this the
+    # escalation claim would be "a logged-in user sees more", which is true of
+    # every correctly configured project in existence.
+    - name: the same signup token reads NOTHING from the owner-scoped relation
+      method: GET
+      path: http://127.0.0.1:54431/rest/v1/my_payslips?select=*
+      headers:
+        Authorization: "Bearer ${signupToken}"
+      expect_status: 200
+      expect_body_contains: "[]"
+    - name: the account created that way is confirmed without any mailbox
+      method: POST
+      path: http://127.0.0.1:54431/auth/v1/signup
+      body: '{"email":"bench04-weak6b@example.invalid","password":"abcdef"}'
+      expect_status: 200
+      expect_body_contains: "email_confirmed_at"
+
+    # FIVE characters is where the floor actually is. GoTrue reports the
+    # boundary in plain text, which is more than /settings does -- the password
+    # policy is not in the settings document at all, and this refusal is the
+    # only place a scanner can read it.
+    - name: signup with a five-character password is refused, and names the floor
+      method: POST
+      path: http://127.0.0.1:54431/auth/v1/signup
+      body: '{"email":"bench04-weak5@example.invalid","password":"abcde"}'
+      expect_status: 422
+      expect_body_contains: "Password should be at least 6 characters."
+    - name: the five-character refusal carries the weak_password error code
+      method: POST
+      path: http://127.0.0.1:54431/auth/v1/signup
+      body: '{"email":"bench04-weak5b@example.invalid","password":"abcde"}'
+      expect_status: 422
+      expect_body_contains: "weak_password"
+
+    # Anonymous sign-in. Found by experiment, and it is POST /signup with a
+    # body carrying NO email and NO password -- an empty object is enough.
+    # There is no separate endpoint and no grant type for it.
+    - name: anonymous sign-in is POST /auth/v1/signup with an empty object
+      method: POST
+      path: http://127.0.0.1:54431/auth/v1/signup
+      body: '{}'
+      expect_status: 200
+      expect_body_contains: '"is_anonymous":true'
+    # Measured, and contrary to what the endpoint name suggests: a body of
+    # {"data":{}} is ALSO accepted as an anonymous sign-in, because GoTrue
+    # branches on the ABSENCE of email and phone rather than on the presence of
+    # any particular field.
+    - name: a body of data-only is also treated as an anonymous sign-in
+      method: POST
+      path: http://127.0.0.1:54431/auth/v1/signup
+      body: '{"data":{}}'
+      expect_status: 200
+      expect_body_contains: '"is_anonymous":true'
+    # And the thing it is NOT, recorded so the negative is not re-derived.
+    - name: there is no anonymous grant type on the token endpoint
+      method: POST
+      path: http://127.0.0.1:54431/auth/v1/token?grant_type=anonymous
+      body: '{}'
+      expect_status: 400
+      expect_body_contains: "unsupported_grant_type"
+
+    # The one thing signup does NOT give away.
+    - name: the admin user list still refuses an ordinary caller
+      method: GET
+      path: http://127.0.0.1:54431/auth/v1/admin/users
+      expect_status: 403
+      expect_body_contains: "not_admin"
+
+    - name: an unrouted path answers the way a managed gateway answers
+      method: GET
+      path: http://127.0.0.1:54431/nope
+      expect_status: 404
+      expect_body_contains: "no Route matched with those values"
+
+  unverified:
+    # The headline escalation claim USED to live here, with the note "verified
+    # by hand, see README; the checker cannot chain a token between requests".
+    # It has moved up into expect.checks: lib/check.py grew capture/${var}
+    # while this project was being built, so the token GoTrue mints for a
+    # stranger is now carried into four reads on every run, including the
+    # owner-scoped control that must return []. The entry is kept, empty, as a
+    # record that the strongest claim in this project was an assertion before
+    # it was a measurement.
+    - claim: >
+        device_inventory is read by the signup token as well as the other
+        three.
+      why: >
+        Only three of the four exposed relations are read with the captured
+        token; device_inventory is asserted with the corpus's offline
+        authenticated key instead. The fourth read would measure nothing the
+        first three do not, and each chained check costs a request against a
+        GoTrue that is deliberately configured to accept them.
+    - claim: >
+        authenticated_read_exposed on the four exposed relations means "a
+        stranger can read this".
+      why: >
+        What lib/check.py measures for that FIELD is narrower: it sends the
+        corpus's own authenticated token, which is minted offline by
+        fixtures/mint-jwt.py and never passes through GoTrue. That establishes
+        the POLICY admits any role=authenticated token. That such a token is
+        obtainable by a stranger is established separately by the signup
+        checks, and the two halves are now joined by the captured-token checks
+        above rather than only by the setup.sh transcript.
+    - claim: >
+        my_payslips would return rows to the user who owns them.
+      why: >
+        Not exercised. Its rows are owned by uuids no token in this corpus
+        carries, which is deliberate -- the control has to gain a fresh account
+        NOTHING -- and no request available to the checker can hold one of
+        those subs. The policy's shape is asserted instead, from pg_policies.

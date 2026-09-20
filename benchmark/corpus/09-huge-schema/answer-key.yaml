@@ -1,0 +1,375 @@
+# Ground truth for corpus project 09: 120 relations, three name families,
+# OpenAPI turned off.
+#
+# Every line below was checked against the running stack by
+# benchmark/corpus/verify.sh 09-huge-schema. Row counts come from psql inside
+# the container; exposure comes from an anonymous HTTP GET. Nothing here is
+# inferred from the DDL, and nothing here was derived by looking at the
+# scanner: the unguessable names come from md5("unruly-bench-09:<n>") in
+# schema/gen.py, which no wordlist can contain because they were invented by
+# this file.
+#
+# The one property this project measures that no other does: discovery RECALL
+# as a PERCENTAGE. The denominator is pinned below by psql (120 relations, 85
+# with a SELECT grant, 56 that actually return rows), so a scan can be scored
+# as "found 41 of 120" rather than as a list of table names somebody eyeballed.
+
+name: 09-huge-schema
+project_ref: bench-09
+base_url: http://127.0.0.1:54481
+# Bare PostgREST at the root, identical to project 01, so the only differences
+# between the two targets are schema size, naming, and the OpenAPI document.
+rest_prefix: /
+anon_key_env: UNRULY_BENCH_ANON_KEY
+authenticated_key_env: UNRULY_BENCH_AUTH_KEY
+fixture: true
+compose: docker-compose.yml
+db:
+  service: db
+  user: postgres
+  database: fixture
+
+# The relations below are a sample, not the roll. Stated as a field because
+# the note saying so was prose, and the first thing that scored this corpus
+# read the list as complete and reported 24 relations the scanner had found
+# CORRECTLY as false alarms -- a scoring artifact presented as a precision
+# collapse, which is exactly the mistake this project refuses to make about
+# its targets.
+relations_are_a_sample: true
+
+notes: >
+  The relations listed under expect.relations are a REPRESENTATIVE SUBSET, 26
+  of 120, chosen to cover all three name families crossed with all three
+  exposure states. They are not the scoring set. The scoring set is the
+  totals under expect.psql; a scan of this target should be reported as a
+  fraction of 120 found and a fraction of 56 correctly called readable.
+
+  No INSERT, UPDATE or DELETE privilege is granted to anon or authenticated
+  anywhere in this project, and expect.psql asserts that. A write finding here
+  is a false positive by construction, which keeps the measurement on the
+  discovery axis alone.
+
+expect:
+  key_in_bundles: false
+  routines: []
+  escalation_gains: []
+  schemas: [public]
+
+  psql:
+    # The denominator. 120 base tables, no views, no other relkinds.
+    - name: public holds exactly 120 relations
+      sql: "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
+      expect: 120
+    - name: all 120 are base tables, not views
+      sql: "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'"
+      expect: 120
+
+    # Two different notions of "anon can read this", and they differ by 29.
+    # A scanner that reports the GRANT count is wrong by 29 relations; one
+    # that reports the row-returning count is right. The gap is the
+    # RLS-enabled-with-no-policy family.
+    - name: 85 relations carry a SELECT grant for anon
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT')"
+      expect: 85
+    - name: 56 relations both grant SELECT and have RLS off, so they return rows
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT') AND NOT c.relrowsecurity"
+      expect: 56
+    - name: 35 relations hold no SELECT grant for anon at all
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT has_table_privilege('anon', c.oid, 'SELECT')"
+      expect: 35
+    - name: 29 relations have RLS enabled
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity"
+      expect: 29
+    - name: not one policy exists, so every RLS-enabled relation returns empty
+      sql: "SELECT count(*) FROM pg_policies WHERE schemaname='public'"
+      expect: 0
+
+    # The write axis is switched off on purpose. Any write finding on this
+    # target is a false positive.
+    - name: no relation grants anon any write verb
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND (has_table_privilege('anon', c.oid, 'INSERT') OR has_table_privilege('anon', c.oid, 'UPDATE') OR has_table_privilege('anon', c.oid, 'DELETE'))"
+      expect: 0
+
+    # Family sizes, so the per-family recall a scan is scored on has a
+    # denominator too. The unguessable family is defined by its prefixes.
+    - name: 80 relations are in the unguessable family
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND (c.relname LIKE 'tbl\_%' OR c.relname LIKE 'kv\_%' OR c.relname LIKE 'zx%' OR c.relname IN ('sporule_ledger','quenchless_intake','halidom_registry','farrago_queue','welkin_vault','pettifog_archive','tarnation_shard','obelus_index','susurrus_cache','gallimaufry_store'))"
+      expect: 80
+    - name: 40 of the unguessable family are anonymously readable
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT') AND NOT c.relrowsecurity AND (c.relname LIKE 'tbl\_%' OR c.relname LIKE 'kv\_%' OR c.relname LIKE 'zx%' OR c.relname IN ('sporule_ledger','quenchless_intake','halidom_registry','farrago_queue','welkin_vault','pettifog_archive','tarnation_shard','obelus_index','susurrus_cache','gallimaufry_store'))"
+      expect: 40
+    - name: only 6 of the 20 guessable names are anonymously readable
+      sql: "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege('anon', c.oid, 'SELECT') AND NOT c.relrowsecurity AND c.relname IN ('users','profiles','orders','sessions','payments','messages','accounts','customers','products','invoices','subscriptions','notifications','comments','posts','files','teams','projects','tickets','addresses','events')"
+      expect: 6
+
+    # 12 relations carry credential-, card- or PII-shaped columns, and every
+    # one of them is in the unguessable family. Content-based severity is
+    # unreachable here without real enumeration.
+    - name: all 12 sensitive-column relations have unguessable names
+      sql: "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name IN ('password_hash','card_number','national_id') AND (table_name LIKE 'tbl\_%' OR table_name LIKE 'kv\_%' OR table_name LIKE 'zx%' OR table_name IN ('sporule_ledger','quenchless_intake','halidom_registry','farrago_queue','welkin_vault','pettifog_archive','tarnation_shard','obelus_index','susurrus_cache','gallimaufry_store'))"
+      expect: 12
+
+  relations:
+    # ---- guessable, open -------------------------------------------------
+    # The six easy wins. Any wordlist scanner gets these and nothing here is
+    # worth having: four rows of 'users-1', 'users-2'.
+    - name: users
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+    - name: products
+      schema: public
+      rows: 7
+      read_exposed: true
+      read_status: 206
+    - name: files
+      schema: public
+      rows: 8
+      read_exposed: true
+      read_status: 206
+
+    # ---- guessable, no grant --------------------------------------------
+    # Reporting any of these as exposed is a false positive, and there are 10
+    # of them. They are the reason a wordlist cannot be scored as a scanner.
+    - name: profiles
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+      authenticated_read_exposed: false
+    - name: invoices
+      schema: public
+      rows: 8
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+    - name: accounts
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+
+    # ---- guessable, RLS on with no policy --------------------------------
+    # HTTP 200 and an empty array. Not exposed, not absent. A scanner keying
+    # on the status code calls these open; one keying on an empty body calls
+    # them nonexistent; both are wrong, and there are 29 in the project.
+    - name: orders
+      schema: public
+      rows: 6
+      read_exposed: false
+      read_status: 200
+    - name: sessions
+      schema: public
+      rows: 7
+      read_exposed: false
+      read_status: 200
+
+    # ---- generic names ---------------------------------------------------
+    # Short and contentless. They exist so that "found 20 relations" cannot be
+    # reported as 20 findings; two rows of 'value-1' is not an incident.
+    - name: t1
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+    - name: data
+      schema: public
+      rows: 2
+      read_exposed: true
+      read_status: 206
+    - name: t2
+      schema: public
+      rows: 3
+      read_exposed: false
+      read_status: 200
+    - name: t4
+      schema: public
+      rows: 5
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+
+    # ---- unguessable, open, credentials ----------------------------------
+    # The measurement. Four tables of bcrypt-shaped hashes, Stripe-prefixed
+    # keys and TOTP seeds, all behind names derived from an md5. A dictionary
+    # enumerator finds none of them and reports this project as boring.
+    - name: tbl_0e1eb483
+      schema: public
+      rows: 3
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [email, password_hash, api_key, totp_secret]
+    - name: tbl_465c6bd5
+      schema: public
+      rows: 9
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [email, password_hash, api_key, totp_secret]
+    - name: kv_7da565
+      schema: public
+      rows: 8
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [email, password_hash, api_key]
+    - name: pettifog_archive
+      schema: public
+      rows: 7
+      read_exposed: true
+      read_status: 206
+      authenticated_read_exposed: true
+      sensitive_columns: [email, password_hash, api_key, totp_secret]
+
+    # ---- unguessable, open, cards and PII --------------------------------
+    - name: tbl_1c6d981c
+      schema: public
+      rows: 9
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [card_number, card_expiry, iban, billing_email]
+    - name: kv_089941
+      schema: public
+      rows: 7
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [card_number, card_expiry, iban, billing_email]
+    - name: kv_b9d403
+      schema: public
+      rows: 7
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [full_name, email, phone_number, national_id]
+    - name: zx9ec4126434
+      schema: public
+      rows: 5
+      read_exposed: true
+      read_status: 206
+      sensitive_columns: [full_name, email, phone_number, national_id]
+
+    # ---- unguessable, open, dull content ---------------------------------
+    # Invented English compounds rather than hex. They sit between "orders"
+    # and "tbl_0e1eb483": a human reading a schema would recognise them as
+    # table names, and no wordlist holds them.
+    - name: quenchless_intake
+      schema: public
+      rows: 3
+      read_exposed: true
+      read_status: 206
+    - name: gallimaufry_store
+      schema: public
+      rows: 4
+      read_exposed: true
+      read_status: 206
+
+    # ---- unguessable, RLS on with no policy ------------------------------
+    - name: halidom_registry
+      schema: public
+      rows: 4
+      read_exposed: false
+      read_status: 200
+    - name: tbl_75bea5ae
+      schema: public
+      rows: 4
+      read_exposed: false
+      read_status: 200
+
+    # ---- unguessable, no grant -------------------------------------------
+    - name: sporule_ledger
+      schema: public
+      rows: 9
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+    - name: welkin_vault
+      schema: public
+      rows: 6
+      read_exposed: false
+      read_status: 401
+      read_sqlstate: "42501"
+
+  checks:
+    # PGRST_OPENAPI_MODE=disabled. MEASURED, and not the status the setting's
+    # name suggests: the root endpoint answers 404 with a DEDICATED code,
+    # PGRST126 "Root endpoint metadata is disabled", rather than falling
+    # through to the generic PGRST205 or to an empty document. So turning the
+    # schema document off does not make the host stop looking like PostgREST;
+    # it swaps a whole schema listing for a distinctive fingerprint.
+    - name: the OpenAPI root is disabled and says so with PGRST126
+      method: GET
+      path: /
+      expect_status: 404
+      expect_body_contains: "PGRST126"
+    - name: the root document leaks no relation name
+      method: GET
+      path: /
+      expect_status: 404
+      expect_body_missing: "tbl_0e1eb483"
+
+    # The oracle that survives the OpenAPI switch, and the reason this project
+    # is not simply "project 01 with more tables". PostgREST's 404 carries a
+    # fuzzy-match HINT naming the closest real relation, so each miss is a
+    # partial hit. A near-miss on an unguessable name returns the full name.
+    - name: a near miss on an unguessable name is completed by the 404 hint
+      method: GET
+      path: /tbl_0e1eb48
+      expect_status: 404
+      expect_body_contains: "tbl_0e1eb483"
+    - name: a near miss on an invented word is completed by the 404 hint
+      method: GET
+      path: /sporule
+      expect_status: 404
+      expect_body_contains: "sporule_ledger"
+
+    # And the hint does NOT follow privileges. `profiles` holds no grant for
+    # anon; project 01 measured that such a relation is ABSENT from the
+    # OpenAPI document. Here the 404 hint names it anyway. Disabling OpenAPI
+    # therefore closes the bulk listing while leaving a per-guess oracle that
+    # leaks strictly more than the document would have.
+    - name: the 404 hint names a relation anon holds no privilege on
+      method: GET
+      path: /profile
+      expect_status: 404
+      expect_body_contains: "profiles"
+
+    - name: a forbidden relation is still named by its own 401
+      method: GET
+      path: /profiles
+      expect_status: 401
+      expect_body_contains: "profiles"
+
+    # A name far enough from everything gets no hint, so the oracle is a
+    # gradient rather than a free schema dump.
+    - name: a distant guess gets a 404 with no hint
+      method: GET
+      path: /xyzzy
+      expect_status: 404
+      expect_body_contains: "PGRST205"
+    - name: a distant guess leaks nothing
+      method: GET
+      path: /xyzzy
+      expect_status: 404
+      expect_body_missing: "Perhaps you meant"
+
+    # RLS-on-no-policy over HTTP: 200 and a literally empty array.
+    - name: an RLS-silent relation answers 200 with an empty array
+      method: GET
+      path: /orders
+      expect_status: 200
+      expect_body_contains: "[]"
+
+  unverified:
+    - claim: recall of the unguessable family cannot be measured by this harness
+      why: >
+        This file pins the denominators (120 relations, 80 unguessable, 56
+        readable) but the numerator is a property of a SCAN, not of the
+        target. Scoring belongs to whatever runs the scanner; the corpus's job
+        is to make the denominator exact and independently derived, and it is.
+    - claim: the 404 hint has not been characterised as a complete enumeration channel
+      why: >
+        Five near-miss probes were measured and all five returned the intended
+        name. Whether the hint can be driven to recover ALL 120 names, and at
+        what request cost, was not measured. Treat the two hint checks above as
+        an existence proof of the channel, not as a bound on it.
