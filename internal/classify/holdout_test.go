@@ -86,11 +86,13 @@ func TestHeldOutNamesAndValues(t *testing.T) {
 		total, nameHits, valueHits, either, recall)
 	t.Logf("negatives=%d  false-positives=%d", negatives, falsePos)
 
-	// A floor, not a target. Measured at 71%: twelve of seventeen recovered
-	// from the value alone with every column name unrecognised. It is asserted
-	// so a rule that stops firing is caught here rather than in a report.
-	if recall < 70 {
-		t.Errorf("held-out recall %.0f%%, floor 70%%: a value rule stopped firing", recall)
+	// A floor, not a target. Measured at 82%: fourteen of seventeen recovered
+	// from the value alone with every column name unrecognised. The floor moved
+	// from 70 when the national-identity and E.164 rules landed; the three that
+	// remain -- a free-text diagnosis and two street addresses -- carry nothing
+	// checkable, and no rule this package would accept can reach them.
+	if recall < 80 {
+		t.Errorf("held-out recall %.0f%%, floor 80%%: a value rule stopped firing", recall)
 	}
 	// Precision is the whole design of this package, so the negatives are not
 	// decoration. One false tag on a held-out negative fails this outright.

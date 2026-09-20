@@ -50,7 +50,12 @@ func TestKindsRecognisesSecretsAndRefusesLookalikes(t *testing.T) {
 		// Sixteen digits that pass Luhn but begin with no issuer range. This is
 		// the order-number case: one in ten such IDs passes Luhn by chance.
 		{"luhn-valid order number", "1234567812345670", nil},
-		{"phone number", "+1 415 555 0132", nil},
+		// Still a control against the card rule -- a phone number must never be
+		// financial -- but no longer "nothing". The name table has classified a
+		// column called phone as contact all along, so a phone VALUE reading as
+		// nothing meant the two classifiers disagreed about the same fact. This
+		// expectation was written before contact was split out of pii.
+		{"phone number", "+1 415 555 0132", []string{"contact"}},
 		{"timestamp run", "20260819013000", nil},
 		{"iban-shaped but failing mod-97", "GB82WEST12345698765433", nil},
 

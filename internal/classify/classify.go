@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/eppser/unruly/internal/creds"
@@ -89,7 +90,10 @@ func kindsOf(s string) []string {
 	if isFinancial(s) {
 		out = append(out, "financial")
 	}
-	if isContact(s) {
+	if isGovernmentID(s) {
+		out = append(out, "government-id")
+	}
+	if isContact(s) || isPhone(s) {
 		// An email address is contact data. It was labelled "pii", which is
 		// true but less useful: under the refined vocabulary pii means the
 		// identity attributes a name rule finds, and putting an email under
@@ -171,27 +175,51 @@ func isCardNumber(d string) bool {
 	return sum%10 == 0
 }
 
-// issuerPrefix reports whether d begins with a range an issuer actually uses.
+// issuerPrefix reports whether d begins with a range an issuer actually uses
+// AND is a length that issuer actually issues.
+//
+// The length is part of the check, and leaving it out cost precision. A
+// validly-formed Chinese resident identity number -- eighteen digits, opening
+// with 4 -- passed Luhn and was reported as a card. Visa issues 13, 16 and 19
+// digits and has never issued 18, so the prefix had already seen enough to
+// refuse it and was not being asked.
+//
+// Where an issuer's range is genuinely wide the range stays wide: UnionPay and
+// Maestro do run 16 to 19, and narrowing those to flatter a test would trade a
+// false positive for a false negative.
 func issuerPrefix(d string) bool {
+	n := len(d)
+	ok := func(lengths ...int) bool {
+		for _, l := range lengths {
+			if n == l {
+				return true
+			}
+		}
+		return false
+	}
 	two := d[:2]
 	switch {
 	case d[0] == '4': // Visa
-		return true
+		return ok(13, 16, 19)
 	case two >= "51" && two <= "55": // Mastercard
-		return true
+		return ok(16)
 	case two == "34" || two == "37": // American Express
-		return true
+		return ok(15)
 	case strings.HasPrefix(d, "6011") || two == "65": // Discover
-		return true
-	case two == "36" || two == "38": // Diners
-		return true
+		return ok(16, 19)
+	case two == "36": // Diners, international
+		return ok(14, 16, 19)
+	case two == "38": // Diners, carte blanche
+		return ok(14)
 	case strings.HasPrefix(d, "35"): // JCB
-		return true
+		return n >= 16 && n <= 19
+	case strings.HasPrefix(d, "62"): // UnionPay
+		return n >= 16 && n <= 19
 	}
 	// Mastercard's 2-series, which is a numeric RANGE rather than a prefix.
 	if len(d) >= 4 {
-		if n := d[:4]; n >= "2221" && n <= "2720" {
-			return true
+		if r := d[:4]; r >= "2221" && r <= "2720" {
+			return ok(16)
 		}
 	}
 	return false
@@ -416,4 +444,201 @@ func Names(names []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// --- national identifiers, recovered from the value ---
+//
+// Only schemes whose digits can be CHECKED. The held-out eval showed why the
+// value has to carry the proof: a column called 身份证 teaches the name table
+// nothing, and there is no finite list of words for "national identity number"
+// across the languages a schema can be written in. A check character does not
+// need translating.
+//
+// Two schemes were considered and rejected, and the reasons are the rule:
+//
+//   US SSN      no checksum at all, so nine digits anywhere would tag as a
+//               government identifier and a table of order numbers would go
+//               critical.
+//   Polish PESEL a single mod-10 check digit, satisfied by roughly one in ten
+//               arbitrary eleven-digit strings. CPF is kept because it carries
+//               two check digits -- about one in a hundred and twenty -- and
+//               rejects repeated-digit sequences.
+
+var (
+	// \b works inside JSON text too, which is where a JSONB column puts it.
+	reChinaID = regexp.MustCompile(`\b\d{17}[\dXx]\b`)
+	reCPF     = regexp.MustCompile(`\b\d{3}\.\d{3}\.\d{3}-\d{2}\b|\b\d{11}\b`)
+)
+
+func isGovernmentID(s string) bool {
+	for _, m := range reChinaID.FindAllString(s, -1) {
+		if validChinaResidentID(m) {
+			return true
+		}
+	}
+	for _, m := range reCPF.FindAllString(s, -1) {
+		if validCPF(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// validChinaResidentID checks the ISO 7064 MOD 11-2 character AND the birth
+// date the number embeds.
+//
+// The check character alone leaves about a one-in-eleven collision rate, which
+// is not a precision claim. Requiring positions 7..14 to be a real date closes
+// most of the rest: an arbitrary eighteen-digit run has to satisfy both.
+func validChinaResidentID(v string) bool {
+	if len(v) != 18 {
+		return false
+	}
+	weights := [17]int{7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2}
+	sum := 0
+	for i := 0; i < 17; i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+		sum += int(v[i]-'0') * weights[i]
+	}
+	if "10X98765432"[sum%11] != strings.ToUpper(v[17:])[0] {
+		return false
+	}
+	year, _ := strconv.Atoi(v[6:10])
+	month, _ := strconv.Atoi(v[10:12])
+	day, _ := strconv.Atoi(v[12:14])
+	if year < 1900 || month < 1 || month > 12 || day < 1 || day > 31 {
+		return false
+	}
+	return true
+}
+
+// validCPF checks both mod-11 digits and rejects the repeated-digit sequences
+// that satisfy them arithmetically -- 111.111.111-11 passes the arithmetic and
+// is not a CPF.
+func validCPF(v string) bool {
+	var d []int
+	for _, r := range v {
+		if r >= '0' && r <= '9' {
+			d = append(d, int(r-'0'))
+		}
+	}
+	if len(d) != 11 {
+		return false
+	}
+	same := true
+	for _, x := range d[1:] {
+		if x != d[0] {
+			same = false
+			break
+		}
+	}
+	if same {
+		return false
+	}
+	for _, pos := range []int{9, 10} {
+		sum := 0
+		for i := 0; i < pos; i++ {
+			sum += d[i] * (pos + 1 - i)
+		}
+		check := 11 - sum%11
+		if check >= 10 {
+			check = 0
+		}
+		if d[pos] != check {
+			return false
+		}
+	}
+	return true
+}
+
+// --- phone numbers ---
+//
+// The one shape here with no checksum, so the structure has to carry the
+// weight instead: a leading +, an ITU-assigned country calling code, and a
+// digit count inside what E.164 permits.
+//
+// Bare national digits are NOT matched. "5511987654321" is indistinguishable
+// from an identifier, and a rule that guesses there would put contact data on
+// every table of large integers. The same reason the card rule wants Luhn and
+// an issuer prefix rather than sixteen digits.
+//
+// Matched against the whole value rather than searched for inside it, for the
+// same reason: a bare + and a number inside free text is far more often a
+// price, a diff or a version than a phone number.
+
+// callingCodes are the assigned ITU-T E.164 country codes, longest first at
+// match time. Unassigned ranges are absent on purpose: +999 must not match, or
+// the "assigned code" half of the check does nothing.
+var callingCodes = map[string]bool{
+	"1": true, "7": true,
+	"20": true, "27": true, "30": true, "31": true, "32": true, "33": true,
+	"34": true, "36": true, "39": true, "40": true, "41": true, "43": true,
+	"44": true, "45": true, "46": true, "47": true, "48": true, "49": true,
+	"51": true, "52": true, "53": true, "54": true, "55": true, "56": true,
+	"57": true, "58": true, "60": true, "61": true, "62": true, "63": true,
+	"64": true, "65": true, "66": true, "81": true, "82": true, "84": true,
+	"86": true, "90": true, "91": true, "92": true, "93": true, "94": true,
+	"95": true, "98": true,
+	"211": true, "212": true, "213": true, "216": true, "218": true,
+	"220": true, "221": true, "222": true, "223": true, "224": true,
+	"225": true, "226": true, "227": true, "228": true, "229": true,
+	"230": true, "231": true, "232": true, "233": true, "234": true,
+	"235": true, "236": true, "237": true, "238": true, "239": true,
+	"240": true, "241": true, "242": true, "243": true, "244": true,
+	"245": true, "248": true, "249": true, "250": true, "251": true,
+	"252": true, "253": true, "254": true, "255": true, "256": true,
+	"257": true, "258": true, "260": true, "261": true, "262": true,
+	"263": true, "264": true, "265": true, "266": true, "267": true,
+	"268": true, "269": true, "290": true, "291": true, "297": true,
+	"298": true, "299": true, "350": true, "351": true, "352": true,
+	"353": true, "354": true, "355": true, "356": true, "357": true,
+	"358": true, "359": true, "370": true, "371": true, "372": true,
+	"373": true, "374": true, "375": true, "376": true, "377": true,
+	"378": true, "380": true, "381": true, "382": true, "383": true,
+	"385": true, "386": true, "387": true, "389": true, "420": true,
+	"421": true, "423": true, "500": true, "501": true, "502": true,
+	"503": true, "504": true, "505": true, "506": true, "507": true,
+	"508": true, "509": true, "590": true, "591": true, "592": true,
+	"593": true, "595": true, "597": true, "598": true, "599": true,
+	"670": true, "672": true, "673": true, "674": true, "675": true,
+	"676": true, "677": true, "678": true, "679": true, "680": true,
+	"681": true, "682": true, "683": true, "685": true, "686": true,
+	"687": true, "688": true, "689": true, "690": true, "691": true,
+	"692": true, "850": true, "852": true, "853": true, "855": true,
+	"856": true, "880": true, "886": true, "960": true, "961": true,
+	"962": true, "963": true, "964": true, "965": true, "966": true,
+	"967": true, "968": true, "970": true, "971": true, "972": true,
+	"973": true, "974": true, "975": true, "976": true, "977": true,
+	"992": true, "993": true, "994": true, "995": true, "996": true,
+	"998": true,
+}
+
+var rePhoneShape = regexp.MustCompile(`^\+[0-9][0-9 ()./-]{6,22}$`)
+
+func isPhone(s string) bool {
+	v := strings.TrimSpace(s)
+	if !rePhoneShape.MatchString(v) {
+		return false
+	}
+	var digits strings.Builder
+	for _, r := range v {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	d := digits.String()
+	// E.164 caps the whole number at 15 digits. The floor is 8: shorter runs
+	// are service codes and abbreviations, not the subscriber numbers this is
+	// looking for.
+	if len(d) < 8 || len(d) > 15 {
+		return false
+	}
+	for n := 3; n >= 1; n-- {
+		if len(d) > n && callingCodes[d[:n]] {
+			return true
+		}
+	}
+	return false
 }
