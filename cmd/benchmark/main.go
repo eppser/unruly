@@ -195,7 +195,8 @@ func bringUp(dir string, t *eval.Target) (func(), error) {
 			return http.ErrUseLastResponse
 		},
 	}
-	deadline := time.Now().Add(90 * time.Second)
+	budget := bringUpBudget()
+	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
 		resp, err := probe.Get(t.BaseURL + t.RestPrefix)
 		if err == nil {
@@ -207,7 +208,31 @@ func bringUp(dir string, t *eval.Target) (func(), error) {
 		time.Sleep(time.Second)
 	}
 	stop()
-	return func() {}, fmt.Errorf("%s did not answer within 90s", t.BaseURL)
+	return func() {}, fmt.Errorf("%s did not answer within %s", t.BaseURL, budget)
+}
+
+// bringUpBudget is how long a corpus stack gets to start answering.
+//
+// Raisable, because the default is a guess about a machine. The comments in
+// bringUp record two rounds of projects reported unreachable that answered in
+// one second when started by hand, and a third happened on a laptop with eight
+// unrelated containers already running. A budget that cannot be raised turns a
+// busy machine into a missing row in the published scoreboard, which is worse
+// than waiting.
+//
+// A junk value falls back rather than parsing to zero: a zero budget fails
+// every project instantly and reads like a corpus-wide outage.
+func bringUpBudget() time.Duration {
+	const fallback = 180 * time.Second
+	v := os.Getenv("UNRULY_BENCH_BRINGUP")
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < time.Second {
+		return fallback
+	}
+	return d
 }
 
 // loadCorpusTarget reads a corpus answer key into the shape the scorer grades.
