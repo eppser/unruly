@@ -49,6 +49,12 @@ the internet, and your server decides who sees what. Path ② is what Supabase,
 Firebase, Neon and PocketBase actually do — and both paths end at the same
 data.
 
+Path ② is also the default for almost everything being vibe-coded right now.
+Lovable, Bolt and v0 wire a new project straight to one of these backends,
+so the generated app ships with a public key and a set of policies nobody
+read. The security boundary is a few lines of SQL an agent wrote in passing —
+[and agents write them only when asked to](#coding-agents-secure-what-the-prompt-names).
+
 So authorization moved out of code you review and into policies on each table.
 Miss one, or write one that is a little too permissive, and that table is a
 public API. Card numbers, password hashes, API tokens, home addresses — one
@@ -62,6 +68,42 @@ public API. Card numbers, password hashes, API tokens, home addresses — one
 
 You will not find this by reading your code. You find it by asking the
 deployed system.
+
+## What this class of bug looks like at scale
+
+A sample of 1,000 live sites:
+
+| | |
+|---|---:|
+| Had a **high or critical** exposure | **33%** |
+| Returned database rows to an **unauthenticated** caller | **31%** |
+| Distinct exposed tables | **1,848** |
+| Rows reachable without logging in | **9.7M+** |
+| Worst single backend | **1.75M rows** |
+
+**What was in them:**
+
+| Data | Sites affected |
+|---|---:|
+| Contact details | 113 |
+| Location data | 76 |
+| Credentials & tokens | 59 |
+| Other personal data | 33 |
+| Financial data | 14 |
+| Government identifiers | 3 |
+| Health data | 2 |
+
+Two sites published a `service_role` key — the key that **bypasses row-level
+security entirely**, making every policy on the project irrelevant.
+
+Firebase showed the same pattern at smaller volume: anonymous reads against
+Realtime Database, Firestore and Storage.
+
+> Sample selected for detectable backend configuration, so it describes the
+> sample rather than the web. Read-only — write exposure was never tested, so
+> it means *not assessed*, not *safe*.
+
+---
 
 ## Quickstart
 
@@ -243,26 +285,21 @@ Detected from the app's own bundle — you don't tell it what you're running.
 ## Why not just use the platform's advisor?
 
 **Because it is documented — and regression-tested — not to flag the most
-common real leak.**
-
-Supabase's advisor is [`splinter`](https://github.com/supabase/splinter). Its
-`0024_rls_policy_always_true` lint checks only `UPDATE` and `DELETE`:
+common real leak.** Supabase's advisor is
+[`splinter`](https://github.com/supabase/splinter), and its
+`0024_rls_policy_always_true` lint ships with this comment:
 
 ```sql
 -- Note: SELECT with (true) is often intentional and documented,
 -- so we only flag UPDATE/DELETE
 ```
 
-So this gets a clean bill of health:
+So this passes, and where signup is open "every signed-in user" is *anyone*:
 
 ```sql
 CREATE POLICY "read notes" ON notes FOR SELECT TO authenticated
   USING (auth.uid() IS NOT NULL);   -- every signed-in user reads every note
 ```
-
-Where signup is open, "every signed-in user" is **anyone**. Neon's advisor is a
-fork of splinter and documents the same exclusion in its own words, so the gap
-is not specific to one vendor.
 
 unruly signs in as two people and compares what each receives:
 
@@ -272,49 +309,11 @@ unruly signs in as two people and compares what each receives:
   The policy grants access to the ROLE rather than to the owning user.
 ```
 
-Three more things no database advisor can see, because they aren't facts a
-database knows about itself: a `service_role` key in a JavaScript bundle, a
-proxy honouring `X-Original-URL`, an Edge Function reaching the database with
-no JWT check.
-
-And an advisor runs **as the project owner**. It can never be pointed at an app
-you're assessing, acquiring, or triaging.
-
----
-
-## What this class of bug looks like at scale
-
-A sample of 1,000 live sites:
-
-| | |
-|---|---:|
-| Had a **high or critical** exposure | **33%** |
-| Returned database rows to an **unauthenticated** caller | **31%** |
-| Distinct exposed tables | **1,848** |
-| Rows reachable without logging in | **9.7M+** |
-| Worst single backend | **1.75M rows** |
-
-**What was in them:**
-
-| Data | Sites affected |
-|---|---:|
-| Contact details | 113 |
-| Location data | 76 |
-| Credentials & tokens | 59 |
-| Other personal data | 33 |
-| Financial data | 14 |
-| Government identifiers | 3 |
-| Health data | 2 |
-
-Two sites published a `service_role` key — the key that **bypasses row-level
-security entirely**, making every policy on the project irrelevant.
-
-Firebase showed the same pattern at smaller volume: anonymous reads against
-Realtime Database, Firestore and Storage.
-
-> Sample selected for detectable backend configuration, so it describes the
-> sample rather than the web. Read-only — write exposure was never tested, so
-> it means *not assessed*, not *safe*.
+Neon's advisor is a fork of splinter and documents the same exclusion, so this
+is not one vendor's oversight. And no advisor can see a `service_role` key in a
+JavaScript bundle, a proxy honouring `X-Original-URL`, or an Edge Function
+reaching the database with no JWT check — none of those are facts a database
+knows about itself.
 
 ---
 
@@ -407,6 +406,17 @@ number without its recall companion is marketing.
 Precision is held down by controls, not luck. Five negative controls run in every batch —
 hosts that are *not* Supabase, including one answering `200` to any path and one
 merely flaky — where the correct result is silence.
+
+Which is what a well-built project looks like on the way out — four relations
+found, three of them correctly refusing the anonymous caller, and only the one
+that really is public reported:
+
+<img src="docs/media/clean.gif" alt="unruly reporting a single genuine finding and confirming the rest are protected" width="100%">
+
+A scanner that cannot produce this picture is not measuring anything. The
+`surface-not-assessed` lines are the other half of the same discipline: the
+realtime socket and the storage API were reached but could not be judged, so
+they are named rather than counted as clean.
 
 Discovery is bounded and explicit. With nothing to harvest, a scan asks about 884
 conventional names; `--emit-vocab` and `--vocab-only` let you hand over the real
@@ -524,7 +534,7 @@ anyone can repeat.
 
 | | What it does | Where it stops |
 |---|---|---|
-| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | Cannot flag a SELECT policy every signed-in user satisfies — by design, and pinned by their own test. Cannot be pointed at a project you don't own |
+| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | [The SELECT exclusion above](#why-not-just-use-the-platforms-advisor), and they run as the owner — so never against an app you're assessing, acquiring or triaging |
 | **nuclei** | Huge template library, great at fingerprinting | Three Supabase templates, **none** test row-level security; the one that finds an anon key extracts it and stops. One real Firebase permission test, write-only and off by default. **Zero** for Firestore, PostgREST or Neon |
 | **Cloud posture tools**<br/>Prowler, ScoutSuite, Wiz | Excellent at AWS/GCP/Azure misconfiguration | Structurally cannot cover this: a Supabase customer has no cloud account to connect and no IAM role to assume |
 | **Secret scanners**<br/>TruffleHog, gitleaks | Find keys in code and history | Tell you a key exists, not what it reaches. A public anon key is *supposed* to ship — the question is what's behind it |
