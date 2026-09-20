@@ -2,12 +2,12 @@
 
 # unruly
 
-**Security scanner for browser-facing databases — Supabase, Firebase, Neon, PocketBase.**
+**Security scanner for backend-as-a-service databases — Supabase, Firebase, Neon, PocketBase.**
 
-These backends put your database *directly on the internet* and hand every
-visitor a public key. Row-level security is the only thing standing between a
-stranger and your tables. unruly finds that key in your own bundle and proves
-what it reaches — with the rows.
+A BaaS puts your database on the internet behind one public key and a row-level
+security policy. Give unruly a URL: it finds the key in your own bundle, proves
+what that key reaches — with the rows — and names the surfaces it could not
+judge. Reproducible evidence, machine-readable for CI and coding agents.
 
 [![CI](https://github.com/eppser/unruly/actions/workflows/ci.yml/badge.svg)](https://github.com/eppser/unruly/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -27,7 +27,7 @@ A classic stack keeps the database private. The browser talks to *your* server,
 your server holds the secret, and the database is unreachable from the internet.
 A bug in your authorization code leaks one endpoint.
 
-A browser-facing backend removes the server. The browser talks to the database's
+A backend-as-a-service removes the server. The browser talks to the database's
 API **directly**, using a key that ships in your JavaScript — by design, for
 everyone, including people reading your bundle.
 
