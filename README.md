@@ -2,11 +2,12 @@
 
 # unruly
 
-**Find out what a stranger can read out of your database — before they do.**
+**Security scanner for browser-facing databases — Supabase, Firebase, Neon, PocketBase.**
 
-Point it at a URL. No credentials, no dashboard access, no agent to install.
-It finds the public key your app already ships to every browser, then proves
-what that key reaches — with the rows.
+These backends put your database *directly on the internet* and hand every
+visitor a public key. Row-level security is the only thing standing between a
+stranger and your tables. unruly finds that key in your own bundle and proves
+what it reaches — with the rows.
 
 [![CI](https://github.com/eppser/unruly/actions/workflows/ci.yml/badge.svg)](https://github.com/eppser/unruly/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -20,14 +21,32 @@ what that key reaches — with the rows.
 
 ---
 
-## The problem
+## Why these databases are different
 
-Your app ships a public API key to the browser. That is by design — Supabase,
-Firebase, Neon and PocketBase all work this way. The key is safe **only** if
-row-level security is on and the policies are right.
+A classic stack keeps the database private. The browser talks to *your* server,
+your server holds the secret, and the database is unreachable from the internet.
+A bug in your authorization code leaks one endpoint.
 
-When they aren't, your database is a public API. Card numbers, password hashes,
-API tokens, home addresses — one `curl` away, no login required.
+A browser-facing backend removes the server. The browser talks to the database's
+API **directly**, using a key that ships in your JavaScript — by design, for
+everyone, including people reading your bundle.
+
+```mermaid
+flowchart LR
+    subgraph T["Classic stack"]
+        B1[Browser] -->|session| A1[Your API server]
+        A1 -->|secret credential| D1[(Database<br/>private)]
+    end
+    subgraph U["Supabase · Firebase · Neon · PocketBase"]
+        B2[Browser] -->|public key<br/>in your bundle| D2[(Database API<br/>on the internet)]
+        D2 --- R{{"Row-level security<br/>the only boundary"}}
+    end
+```
+
+So authorization moved out of code you review and into policies on each table.
+Miss one, or write one that is a little too permissive, and that table is a
+public API. Card numbers, password hashes, API tokens, home addresses — one
+`curl` away, no login required.
 
 ```diff
 - customers        25 rows   full_name, email, phone_number, address_line
@@ -58,10 +77,19 @@ retrieved them. If you can't reproduce a finding by pasting its command, it
 isn't a finding. No "this policy looks risky" — either data came back or it
 didn't.
 
-### 🔍 Zero-config discovery
+### 🔍 Zero-config discovery & enumeration
 Give it a URL. It reads the HTML, walks the JavaScript bundles, recovers the
-project reference and the public key, identifies the backend, and maps the
-schema — before it sends a single probe at your data.
+project reference and the public key, identifies the backend, then enumerates
+what exists: tables, columns, RPC routines, storage buckets, schemas and
+application routes — harvesting your app's own vocabulary so it asks about
+*your* names, not a generic wordlist.
+
+### 🏷️ It tells you what kind of data leaked
+Findings are classified by what actually came back — `credential`, `financial`,
+`contact`, `pii`, `location`, `health`, `government-id` — from the values
+themselves and from the column names. "`payment_methods` is readable" and
+"`payment_methods` is readable and contains card numbers" are different
+incidents, and only one of them wakes someone up.
 
 ### ⚡ Parallel by default
 64 concurrent probes per scan, tuned to PostgREST's measured saturation point,
@@ -81,7 +109,14 @@ an AI agent can diff two runs and see exactly what its own change broke.
 ### 🛡️ Safe by default
 Read-only unless you explicitly opt in. `--measure` proves a table is readable
 using row counts **without retrieving a single row** — the flag for a project
-you don't own. Writes are gated behind `-write -yes-i-own-this`.
+you don't own.
+
+Writes are gated behind `-write -yes-i-own-this`, and even then they are
+non-destructive: an INSERT is aimed at a constraint so it is rejected *after*
+authorization, an UPDATE collides with a unique value rather than changing one,
+and DELETE is only ever reported for a row the scanner itself created. If an
+anonymous caller can delete your data, this tool will not prove it by deleting
+your data.
 
 ### 📋 Honest about blind spots
 Exit code `3` means *something could not be assessed* — not clean. Where
@@ -91,6 +126,14 @@ when it failed to look is worse than no scanner.
 ### 🔁 Deterministic
 Two scans of an unchanged target produce byte-identical output. Diff them in
 CI and a change means the target changed.
+
+### 🧩 Extensible by design
+A backend is one file behind a small interface: recognise yourself in a bundle,
+declare your stages, declare what you *cannot* measure. The core owns findings,
+evidence, redaction, budgets and rate limits, so a new backend inherits all of
+it. [`docs/providers.md`](docs/providers.md) is the contract, and
+`internal/provider/contract_test.go` is a complete second backend in about
+forty lines.
 
 ---
 
@@ -347,6 +390,24 @@ unruly -l targets.txt -json -o report.jsonl # an estate, machine-readable
 
 unruly -u https://your-app.com -principal a=<jwt> -principal b=<jwt>   # cross-identity
 unruly -u https://your-app.com -write -yes-i-own-this                  # write probes
+
+unruly -u https://your-app.com -plain       # who can reach what, in plain language
+unruly -u https://your-app.com -stats       # what was enumerated and what it cost
+unruly -u https://your-app.com -emit-vocab names.txt   # harvest the schema, probe nothing
+unruly -u https://your-app.com -vocab names.txt -vocab-only  # probe only your real names
+```
+
+Findings carry their data classes, so you can triage on what leaked rather than
+on how many rows did:
+
+```bash
+unruly -u https://your-app.com --agent \
+  | jq 'select(.observed.classes) | {severity, resource, classes: .observed.classes}'
+```
+```json
+{"severity":"critical","resource":"user_credentials","classes":["credential"]}
+{"severity":"critical","resource":"payment_methods","classes":["contact","financial"]}
+{"severity":"critical","resource":"customers","classes":["contact","location","pii"]}
 ```
 
 | Exit code | Meaning |
