@@ -95,7 +95,3 @@ experiments/rls-agents/runs/
 # thing it exists to hide. A single opaque prefix discloses nothing and is the
 # only rule a reviewer has to check.
 /private/
-
-# The npm wrapper downloads the binary at install time; a local test run leaves
-# one here and it must never be committed.
-/npm/bin/

@@ -1,9 +1,9 @@
 # Build the release artifacts on a tag, and attach them with their checksums.
 #
 # Built in CI rather than on a maintainer's laptop so the binaries anyone
-# downloads come from a public, inspectable job. The npm package pins these
-# checksums and refuses to install a binary that does not match, so this
-# workflow is the thing that makes that guarantee mean something.
+# downloads come from a public, inspectable job. The checksums are published
+# beside the binaries so anyone can verify what they downloaded came from this
+# job and not from somewhere else.
 name: release
 
 on:

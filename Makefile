@@ -192,6 +192,30 @@ wordlists: ## Regenerate the pinned wordlists and sync them into the binary
 # ---------------------------------------------------------------- fixtures
 
 .PHONY: fixtures-up
+.PHONY: fixtures-pull
+fixtures-pull: ## Pre-pull every fixture image, serially and with retries
+	@# Docker Hub rate-limits anonymous pulls by source IP and GitHub's runners
+	@# share theirs. `fixtures-up` starts five stacks back to back and compose
+	@# pulls each stack's images in parallel, and that burst is what trips it:
+	@# every CI run on this repository failed at "start fixtures" with
+	@# "toomanyrequests: Rate exceeded" before a single test ran.
+	@#
+	@# Serialised and retried, because the burst limit recovers in seconds. A
+	@# pull that still fails after the backoff is a real failure and stays one:
+	@# retrying forever would turn a dead registry into a hung job.
+	@for d in lab hardened matrix edge notsupabase; do \
+		for attempt in 1 2 3 4 5; do \
+			if COMPOSE_PARALLEL_LIMIT=1 docker compose -f fixtures/$$d/docker-compose.yml pull -q; then \
+				break; \
+			fi; \
+			if [ $$attempt -eq 5 ]; then \
+				echo "fixtures/$$d: image pull failed after 5 attempts"; exit 1; \
+			fi; \
+			echo "fixtures/$$d: pull failed, retrying in $$((attempt * 15))s"; \
+			sleep $$((attempt * 15)); \
+		done; \
+	done
+
 fixtures-up: ## Start every eval fixture and mint their JWTs
 	@cd fixtures/lab && docker compose up -d --remove-orphans
 	@cd fixtures/hardened && docker compose up -d

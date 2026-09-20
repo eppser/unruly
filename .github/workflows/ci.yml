@@ -26,6 +26,13 @@ on:
 permissions:
   contents: read
 
+# A push that supersedes another cancels it. Eleven pushes in ninety minutes
+# ran eleven full suites and sent eleven failure emails, ten of them about a
+# commit nobody was looking at any more. Cancelled runs do not email.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   offline:
     runs-on: ubuntu-latest
@@ -90,6 +97,22 @@ jobs:
         with:
           go-version: '1.25'
           check-latest: true
+      # Optional, and skipped cleanly when the secret is absent so a fork still
+      # runs this job. Authenticated pulls get a much higher Docker Hub limit,
+      # which is the durable fix; the retry below is what carries it without.
+      - name: docker hub login, if a token is configured
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: env.DOCKERHUB_TOKEN != ''
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+
+      # Separate from `start fixtures` so a registry rate limit reads as a
+      # registry rate limit. Rolled into the bring-up it looked like the
+      # fixtures were broken, which is what it looked like for eleven runs.
+      - name: pull fixture images
+        run: make fixtures-pull
+
       - name: start fixtures
         run: make fixtures-up
       - name: reset fixtures to seed state

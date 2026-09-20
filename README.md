@@ -563,7 +563,6 @@ what you need to prove it.
 ## Install
 
 ```bash
-npm install -g @eppser/unruly          # downloads the binary for your platform
 go install github.com/eppser/unruly/cmd/unruly@latest
 ```
 
@@ -573,10 +572,6 @@ Or grab a static binary from [releases](https://github.com/eppser/unruly/release
 ```bash
 git clone https://github.com/eppser/unruly && cd unruly && make build
 ```
-
-The npm package ships no binary. It downloads the one for your platform from
-the matching release and verifies it against a checksum pinned at publish time;
-a mismatch fails the install rather than warning about it.
 
 ## Documentation
 
