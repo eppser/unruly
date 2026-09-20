@@ -1,0 +1,224 @@
+# Ground-truth eval target: local PostgREST fixture.
+#
+# Unlike a live cloud target, whose posture has to be MEASURED, this one is
+# known by CONSTRUCTION: the schema in fixtures/lab/schema/01_lab_schema.sql
+# creates each state deliberately. That makes it the coverage check, while a live
+# project remains the realism check.
+#
+# Bring it up with:
+#   cd fixtures/lab && docker compose up -d
+#   export UNRULY_FIXTURE_KEY=$(cat anon.jwt)
+#
+# Every expectation below was re-verified against the running stack rather than
+# assumed from the DDL, because an answer key that was never checked is just a
+# second opinion.
+
+name: lab-fixture
+project_ref: lab
+base_url: http://127.0.0.1:54321
+# Bare PostgREST serves at the root; the managed product routes through Kong
+# at /rest/v1.
+rest_prefix: /
+anon_key_env: UNRULY_FIXTURE_KEY
+fixture: true
+
+# A second exposed schema, added in fixtures/lab/schema/03_extra_schema.sql and
+# served via PGRST_DB_SCHEMAS=public,reporting.
+#
+# Graded by TestFixtureScansASecondSchema rather than by the relation table
+# below, which addresses the default schema by name. Expectations:
+#
+#   reporting.daily_revenue    14 rows, SELECT granted to anon -> read exposed,
+#                              critical (customer_email is a sensitive column)
+#   reporting.revenue_secrets  all privileges revoked -> Postgres answers 401
+#                              with SQLSTATE 42501 and NAMES the table, which
+#                              proves it exists; it must be discovered and must
+#                              NOT be reported as exposed
+#
+# The second one is the regression guard for a real bug: 401 was treated as
+# saying nothing about the schema, so relations protected by REVOKE rather than
+# by RLS were dropped and an entire schema reported as empty.
+
+# The site fixture at http://127.0.0.1:54322, brought up with the stack.
+#
+# It exists because a sweep of every documented finding id against every
+# available target showed that two criticals-and-highs had never been produced
+# by a real scan, only by unit tests calling their constructors:
+#
+#   supabase-service-key-exposed     a service_role key in the page's JavaScript
+#   app-route-auth-inconsistency     /api/admin/users open, siblings 401
+#
+# Building the first found a second, larger defect: an explicit -site was being
+# discarded when -target was also given, so the application was never fetched
+# and the key went unreported.
+#
+# The service_role key is MINTED at fixtures-up time into fixtures/lab/site/,
+# which is gitignored. A JWT-shaped string in the tree trips this repository's
+# own secret scan, and a fixture is not a reason to keep a credential around.
+#
+# The site also serves a CONSISTENT family -- /api/public/stats, health and
+# version, all open -- because a public API is not a misconfiguration and a
+# scanner that flags one is unusable. Graded by
+# TestFixtureRouteInconsistencyIsFoundWithoutFlaggingPublicAPIs: exactly one
+# route finding, for /api/admin/users, at high.
+
+# The throttled host at http://127.0.0.1:54323, brought up with the stack.
+#
+# A PostgREST-shaped host that answers 429 for four names from the pinned
+# wordlist (user, users, token, tokens) and 404 PGRST205 for everything else,
+# including the control relation. Partial on purpose: refusing every probe
+# makes the target non-discriminating, which is a different and louder finding.
+# What this reproduces is the field case -- a project under a rate limit where
+# most probes answer and some do not.
+#
+# Graded by TestFixtureThrottledProbesAreReportedAsUnresolved. Expectations:
+#
+#   Discriminating   true      the control answers 404
+#   Unresolved       > 0       the 429s survive the client's retries
+#   finding          unruly-probes-unresolved, whose description must say
+#                              the relation list is a LOWER BOUND
+#   exit code        3         measured against the hardened fixture's 0
+#
+# unruly-probes-unresolved had never been produced by a scan of any
+# target before this fixture existed.
+
+# The preview host at http://127.0.0.1:54324, brought up with the stack.
+#
+# A stale branch deploy still serving an anon key, which is where a credential
+# survives a production rotation. It serves a DIFFERENT key from production's,
+# so supabase-preview-deployment-key takes its medium branch rather than the
+# low "already public" one.
+#
+# Building it found that fixtures/mint-jwt.py accepted --sub and silently
+# ignored it for anon tokens: two keys minted with different subs came out
+# byte identical, and the fixture would have documented the wrong expectation.
+# The minter now carries sub for every role and VERIFIES it after minting, the
+# same way it already verified role -- the drift that check exists for had
+# simply moved to the next flag.
+#
+# Graded by TestFixturePreviewDeploymentKeyIsReported.
+
+# The archive host at http://127.0.0.1:54325, brought up with the stack.
+#
+# A local stand-in for a public web archive, serving the two endpoints the
+# history package calls: the CDX index and the archived bytes. The two
+# historic-key findings were the last ids no scan had ever produced, and the
+# reason given -- nobody can put a key of their own into web.archive.org -- was
+# true and beside the point. history.Options carries an ArchiveBase and the CLI
+# already exposes it as -archive.
+#
+# Three captures, one per branch of snapshotFinding:
+#
+#   a-service.js  service_role key      critical  historic-service-key-exposed
+#   b-current.js  the CURRENT anon key  high      historic-key-not-rotated
+#   c-rotated.js  a superseded key      info      historic-key-rotated
+#
+# The middle one is the case worth having: a key removed from the bundle but
+# never rotated, where current bundles being clean is not remediation.
+#
+# Graded by TestExitCodeHistoricKeysAreReportedByTheBinary, which drives the
+# BINARY rather than history.Run -- the distinction between a rule that can be
+# built and one a scan can reach.
+
+notes: >
+  Covers eight states the cloud target does not, including two code paths that
+  had never executed against a real database: an all-nullable relation where an
+  empty INSERT genuinely lands a row and must be cleaned up, and a
+  write-only-policy relation that reads empty while accepting anonymous writes
+  (the "public submission form" shape that read-only scanners call safe).
+
+expect:
+  key_in_bundles: false
+
+  # Relations an `authenticated` credential can read that `anon` cannot.
+  # owner_scoped is deliberately excluded: its policy is scoped to the owning
+  # user, so elevating gains nothing and reporting it would be a false alarm.
+  escalation_gains:
+    - authenticated_only
+
+  routines:
+    - admin_purge_submissions
+    - public_stats_summary
+    # Added with fixtures/lab/schema/06_sqlexec.sql. Disclosed by the hint
+    # oracle even though anon holds no EXECUTE privilege on it, which is the
+    # documented behaviour of that oracle: it names routines from the schema
+    # cache, not from privileges.
+    #
+    # Its sibling exec_sql -- the one anon CAN call, and the one that answers
+    # whether a stranger can drop the database -- is NOT in this list, because
+    # the oracle does not disclose it: the harvested vocabulary never contains
+    # it. That is the whole reason the arbitrary-SQL check probes a pinned list
+    # of candidate names directly instead of only the routines discovery found.
+    - run_sql
+
+  relations:
+    # RLS never enabled: the mistake the Supabase dashboard emails about.
+    - name: open_no_rls
+      rows: 12
+      read_exposed: true
+      insert_reachable: true
+
+    # Named nowhere in any application; reachable only via the hint oracle.
+    - name: open_no_rls_archive
+      rows: 2
+      read_exposed: true
+      insert_reachable: true
+
+    # Credentials and PII: must raise severity from high to critical.
+    - name: leaky_credentials
+      rows: 4
+      read_exposed: true
+      insert_reachable: true
+      sensitive_columns: [email, api_key, password_hash, phone_number]
+
+    # Supabase's own auth token names. Critical rather than high, and
+    # tokens_used must NOT be flagged: it is a count, and flagging it would put
+    # a critical on every usage table.
+    - name: tokens
+      rows: 6
+      read_exposed: true
+      insert_reachable: true
+      sensitive_columns: [user_email, confirmation_token, recovery_token]
+
+    # Every column nullable or defaulted, so an empty INSERT SUCCEEDS and the
+    # probe must delete what it created. Verified: count returns to 2.
+    - name: all_defaults_insertable
+      rows: 2
+      read_exposed: true
+      insert_reachable: true
+
+    # SELECT policy, no INSERT policy. Readable, not writable.
+    - name: read_only_policy
+      rows: 5
+      read_exposed: true
+      insert_reachable: false
+
+    # INSERT policy, no SELECT policy. Reads return 200 with range */0 while
+    # writes are accepted. Every read-only scanner reports this as safe.
+    - name: write_only_policy
+      rows: 0
+      read_exposed: false
+      insert_reachable: true
+
+    # RLS enabled, no policy at all. The precision case: flagging this is a
+    # false positive. Verified: SELECT -> 200 */0, INSERT -> 42501.
+    - name: protected_rls_no_policy
+      rows: 0
+      read_exposed: false
+      insert_reachable: false
+
+    # Invisible to anon, but readable by ANY logged-in user. Where signup is
+    # open this data is effectively public while an anon-only scan calls the
+    # relation protected. Verified: anon */0, authenticated 0-0/6.
+    - name: authenticated_only
+      rows: 0
+      read_exposed: false
+      insert_reachable: false
+
+    # Correctly scoped: authenticated users see only their own rows, so
+    # escalation gains nothing. The precision case for the escalation probe.
+    # Verified: */0 for both roles.
+    - name: owner_scoped
+      rows: 0
+      read_exposed: false
+      insert_reachable: false

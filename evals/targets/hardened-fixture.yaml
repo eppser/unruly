@@ -1,0 +1,81 @@
+# Ground-truth eval target: a CORRECTLY configured project.
+#
+# The vulnerable fixture measures recall. This one measures precision, which is
+# the harder property: a scanner that flags every relation scores perfect
+# recall and is worthless. The only way to show unruly is not that tool is
+# to point it at a project with nothing wrong and require near-silence.
+#
+# Every relation here holds real data and is reachable through PostgREST, so
+# faulty logic has something to trip over. Each is protected the way Supabase
+# documents: RLS enabled, policies scoped to the owning user rather than to a
+# role, routine EXECUTE revoked.
+#
+#   cd fixtures/hardened && docker compose up -d
+#   export UNRULY_HARDENED_KEY=$(cat anon.jwt)
+
+name: hardened-fixture
+project_ref: hardened
+base_url: http://127.0.0.1:54331
+rest_prefix: /
+anon_key_env: UNRULY_HARDENED_KEY
+fixture: true
+
+notes: >
+  Expected result is a single finding, and it is a true positive rather than a
+  false one: contact_requests genuinely accepts anonymous INSERT because it is a
+  public submission form. Reporting an intended exposure is still correct — the
+  operator gets to decide whether it was intended, and the scanner does not get
+  to assume. What matters for precision is that the other four relations, which
+  hold customer records and API credentials, produce nothing at all.
+
+expect:
+  key_in_bundles: false
+
+  # CORRECTED. This previously said routines: [] on the reasoning that EXECUTE
+  # is revoked, and the eval passed — for the wrong reason. PostgREST builds its
+  # hint from the schema cache, which knows nothing about privileges, so the
+  # routine IS disclosed:
+  #
+  #   POST /rpc/internal_recalc
+  #     -> hint: "Perhaps you meant to call the function public.internal_recalculate_ledger"
+  #   POST /rpc/internal_recalculate_ledger
+  #     -> 42501 "permission denied for function internal_recalculate_ledger"
+  #
+  # The earlier pass was an artifact of the 600-candidate cap: internal_* stems
+  # sorted outside it. An answer key that is right by accident is worse than one
+  # that is wrong, because nothing will ever correct it.
+  routines:
+    - internal_recalculate_ledger
+
+  # Nothing is readable by anon, so elevating to authenticated gains nothing
+  # either: every policy is scoped to the owning user, not to the role.
+  escalation_gains: []
+
+  relations:
+    # Holds 20 customer records with email addresses. Invisible to anon.
+    - name: customers
+      rows: 0
+      read_exposed: false
+      insert_reachable: false
+
+    # Holds live-looking API keys and password hashes. If the sensitive-column
+    # classifier ever fires on a relation the role cannot actually read, it
+    # shows up here.
+    - name: api_credentials
+      rows: 0
+      read_exposed: false
+      insert_reachable: false
+
+    # A public submission form, done correctly: anonymous INSERT is intended
+    # and bounded by WITH CHECK, reads stay closed. Genuinely writable, so it
+    # must be reported.
+    - name: contact_requests
+      rows: 0
+      read_exposed: false
+      insert_reachable: true
+
+    # RLS on, no policy for any client role.
+    - name: internal_ledger
+      rows: 0
+      read_exposed: false
+      insert_reachable: false
