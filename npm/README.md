@@ -1,8 +1,9 @@
 # @eppser/unruly
 
-Security scanner for browser-facing databases — Supabase, Firebase, Neon,
-PocketBase. Point it at a URL and it proves what an anonymous caller can read,
-with the rows as evidence.
+Security scanner for backend-as-a-service databases — Supabase, Firebase,
+Neon, PocketBase. Give it a URL: it finds the public key in your own bundle,
+proves what that key reaches — with the rows — and names the surfaces it
+could not judge.
 
 ```bash
 npm install -g @eppser/unruly

@@ -1,7 +1,7 @@
 {
   "name": "@eppser/unruly",
   "version": "0.1.0-beta",
-  "description": "Security scanner for browser-facing databases (Supabase, Firebase, Neon, PocketBase) \u2014 proves what an anonymous caller can read, with the rows as evidence",
+  "description": "Security scanner for backend-as-a-service databases (Supabase, Firebase, Neon, PocketBase) \u2014 give it a URL, it proves what an anonymous caller reaches, with the rows as evidence",
   "keywords": [
     "supabase",
     "firebase",
