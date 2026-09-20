@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -68,13 +69,19 @@ func main() {
 			skipped = append(skipped, fmt.Sprintf("%s (%v)", name, err))
 			continue
 		}
+		t0 := time.Now()
 		stop, err := bringUp(filepath.Dir(key), tgt)
+		progress(name, "bring-up", time.Since(t0), err)
 		if err != nil {
 			skipped = append(skipped, fmt.Sprintf("%s (%v)", name, err))
 			continue
 		}
+		t0 = time.Now()
 		obs, err := scan(*binary, tgt)
+		progress(name, "scan", time.Since(t0), err)
+		t0 = time.Now()
 		stop()
+		progress(name, "teardown", time.Since(t0), nil)
 		if err != nil {
 			// A project that is not up is NOT a project that scored zero.
 			// Recording it as a failure would let a docker problem read as a
@@ -695,4 +702,23 @@ func gitLine(args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// progressTo writes one line per phase of one project.
+//
+// Diagnostic output only, and on stderr on purpose: the report on stdout is
+// compared byte for byte between runs, and interleaving progress into it would
+// make every run differ from every other. It exists because two full runs were
+// lost to projects reported unreachable after five minutes that answered in ten
+// seconds by hand, with no way to tell afterwards where the time had gone.
+func progressTo(w io.Writer, project, phase string, took time.Duration, err error) {
+	status := "ok"
+	if err != nil {
+		status = "FAILED: " + err.Error()
+	}
+	fmt.Fprintf(w, "[%-24s] %-9s %7s  %s\n", project, phase, took.Round(time.Millisecond*100), status)
+}
+
+func progress(project, phase string, took time.Duration, err error) {
+	progressTo(os.Stderr, project, phase, took, err)
 }
