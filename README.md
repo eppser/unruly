@@ -101,12 +101,11 @@ CI and a change means the target changed.
 
 **🚀 You vibe-coded an app**
 
-Lovable, Bolt, v0, Replit or Cursor wrote your schema in seconds and you
-reviewed it in seconds. Neither of you asked what the deployed result hands to
-a stranger.
+Claude Code, Codex or Cursor wrote your schema in seconds and you reviewed it
+in seconds. Neither of you asked what the deployed result hands to a stranger.
 
 ```bash
-unruly -u https://myapp.vercel.app
+unruly -u https://myapp.example.com
 ```
 
 </td><td width="33%">
@@ -207,8 +206,8 @@ CREATE POLICY "read notes" ON notes FOR SELECT TO authenticated
 ```
 
 Where signup is open, "every signed-in user" is **anyone**. Neon's advisor is a
-fork with the same exclusion. Lovable's scanner uses splinter, so the largest
-AI app builder inherits the blind spot.
+fork of splinter and documents the same exclusion in its own words, so the gap
+is not specific to one vendor.
 
 unruly signs in as two people and compares what each receives:
 
@@ -266,7 +265,9 @@ Realtime Database, Firestore and Storage.
 
 ## Coding agents secure what the prompt names
 
-Six agents, one Supabase app, ground truth read from the running database:
+**Claude Code, Codex, Cursor, Kimi, GLM-5.3 and DeepSeek** were each given the
+same Supabase app. Ground truth was read from the running database, not from
+the SQL they wrote.
 
 | The prompt | Agents shipping an insecure database |
 |---|---|
@@ -274,13 +275,22 @@ Six agents, one Supabase app, ground truth read from the running database:
 | …plus *"make it secure"* | **0 of 5** |
 | just the tables — nothing about who calls them | **4 of 6** |
 
-Remove one clause and four of six emit **zero** RLS statements and **zero**
-policies. Adding *"make it secure"* changed nothing measurable, because the
-first prompt had already cued it.
+Remove that one clause and **Codex, Cursor, Kimi and DeepSeek** emit zero RLS
+statements and zero policies. **Claude Code and GLM-5.3** kept row-level
+security on: GLM-5.3 across all three prompts, Claude Code in the uncued one.
 
-Two agents kept RLS on throughout — so it's conditional on phrasing, not
-universal. Which is the whole argument for verifying the deployed result rather
-than trusting the instruction.
+Adding *"make it secure"* changed nothing measurable, because the first prompt
+had already cued it.
+
+> One run per cell, one task, one backend. Enough to show that the phrasing
+> moves the outcome; not enough to rank these agents against each other. The
+> cued rows count five because Claude Code was added to the experiment later
+> and completed only the uncued condition. A different task, or a second run,
+> may well place them differently.
+
+The failure is conditional on phrasing, not universal — which is the whole
+argument for verifying the deployed result rather than trusting the
+instruction.
 
 ---
 
