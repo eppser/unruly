@@ -33,15 +33,21 @@ everyone, including people reading your bundle.
 
 ```mermaid
 flowchart LR
-    subgraph T["Classic stack"]
-        B1[Browser] -->|session| A1[Your API server]
-        A1 -->|secret credential| D1[(Database<br/>private)]
-    end
-    subgraph U["Supabase · Firebase · Neon · PocketBase"]
-        B2[Browser] -->|public key<br/>in your bundle| D2[(Database API<br/>on the internet)]
-        D2 --- R{{"Row-level security<br/>the only boundary"}}
-    end
+    B([Browser]):::n
+    B -->|"① classic stack<br/>session cookie"| API[Your API server<br/>holds the secret]:::n
+    API --> DB[("Your database")]:::db
+    B -->|"② browser-facing backend<br/>PUBLIC key, in your JS bundle"| RLS{{"Row-level security<br/>the ONLY thing in the way"}}:::g
+    RLS --> DB
+
+    classDef n fill:#1f2937,stroke:#4b5563,color:#e5e7eb
+    classDef db fill:#0f766e,stroke:#14b8a6,color:#ffffff
+    classDef g fill:#7f1d1d,stroke:#ef4444,color:#ffffff
 ```
+
+Path ① is the stack most developers picture: the database is unreachable from
+the internet, and your server decides who sees what. Path ② is what Supabase,
+Firebase, Neon and PocketBase actually do — and both paths end at the same
+data.
 
 So authorization moved out of code you review and into policies on each table.
 Miss one, or write one that is a little too permissive, and that table is a
@@ -105,6 +111,12 @@ client's stack.
 `--agent` emits a versioned JSON envelope with stable finding fingerprints, so
 an AI agent can diff two runs and see exactly what its own change broke.
 [Schema included](docs/schema/unruly-agent-v1.schema.json).
+
+### ✍️ It tests writes too, without breaking anything
+Reading your data is half the question; the other half is whether a stranger
+can **change or delete** it. With `-write -yes-i-own-this` it checks anonymous
+`INSERT`, `UPDATE` and `DELETE` per table — and the four verbs are graded
+independently, because a table that refuses inserts may still accept deletions.
 
 ### 🛡️ Safe by default
 Read-only unless you explicitly opt in. `--measure` proves a table is readable
@@ -308,9 +320,12 @@ Realtime Database, Firestore and Storage.
 
 ## Coding agents secure what the prompt names
 
-**Claude Code, Codex, Cursor, Kimi, GLM-5.3 and DeepSeek** were each given the
-same Supabase app. Ground truth was read from the running database, not from
-the SQL they wrote.
+**Claude Code, Codex, Cursor, Kimi, GLM-5.3 and DeepSeek** were each asked for
+the same five tables: user profiles, feedback, comments, API tokens and an
+audit log. Nothing exotic, and nothing that hints at security.
+
+Every result was then deployed and scanned, so the verdict comes from what the
+running database handed out — not from reading the SQL they wrote.
 
 | The prompt | Agents that left row-level security **off entirely** |
 |---|---|
@@ -318,9 +333,24 @@ the SQL they wrote.
 | …plus *"make it secure"* | **0 of 5** |
 | just the tables — nothing about who calls them | **4 of 6** |
 
-Remove that one clause and **Codex, Cursor, Kimi and DeepSeek** emit zero RLS
-statements and zero policies. **Claude Code and GLM-5.3** kept row-level
-security on: GLM-5.3 across all three prompts, Claude Code in the uncued one.
+Remove that one clause and **Codex, Cursor, Kimi and DeepSeek** produced
+databases with **no access control at all**. Every table was readable *and*
+writable by anyone on the internet holding the public key — which is everyone
+who opens the site:
+
+| Table the task asked for | What anyone could do |
+|---|---|
+| `api_tokens` — integration tokens and their scopes | read, and write |
+| `profiles` — names and email addresses | read, and write |
+| `feedback` — including anything marked private | read, and write |
+| `feedback_comments` | read, and write |
+| `audit_log` — the record of who did what | read, and **rewrite** |
+
+Not "a policy was slightly too permissive". No policies existed. The last row is
+worth a second look: an audit log a stranger can edit is not an audit log.
+
+**Claude Code and GLM-5.3** kept row-level security on — GLM-5.3 across all
+three prompts, Claude Code in the uncued one.
 
 Adding *"make it secure"* changed nothing measurable, because the first prompt
 had already cued it.
@@ -486,6 +516,25 @@ After deploying, verify with: unruly -u <url> --proven
 Then verify, because an agent can satisfy that instruction and still leak.
 
 ---
+
+## How this compares
+
+Other tools touch this space. Here is where each one lands, with the checks
+anyone can repeat.
+
+| | What it does | Where it stops |
+|---|---|---|
+| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | Cannot flag a SELECT policy every signed-in user satisfies — by design, and pinned by their own test. Cannot be pointed at a project you don't own |
+| **nuclei** | Huge template library, great at fingerprinting | Three Supabase templates, **none** test row-level security; the one that finds an anon key extracts it and stops. One real Firebase permission test, write-only and off by default. **Zero** for Firestore, PostgREST or Neon |
+| **Cloud posture tools**<br/>Prowler, ScoutSuite, Wiz | Excellent at AWS/GCP/Azure misconfiguration | Structurally cannot cover this: a Supabase customer has no cloud account to connect and no IAM role to assume |
+| **Secret scanners**<br/>TruffleHog, gitleaks | Find keys in code and history | Tell you a key exists, not what it reaches. A public anon key is *supposed* to ship — the question is what's behind it |
+| **Commercial BaaS scanners** | Several do URL-only, evidence-first scanning and do it well | Closed source, usually Supabase-only, and none publishes a check inventory or a scored benchmark you can run |
+
+The honest summary: nothing here is unique because it is clever. It is
+different because of what it is willing to publish — the full check list, the
+corpus, the answer keys, the recall alongside the precision, and the cases it
+declines to judge. If a claim in this README is wrong, the repository contains
+what you need to prove it.
 
 ## Where it is *not* the right tool
 
