@@ -492,15 +492,20 @@ Then verify, because an agent can satisfy that instruction and still leak.
 ## Install
 
 ```bash
+npm install -g @eppser/unruly          # downloads the binary for your platform
 go install github.com/eppser/unruly/cmd/unruly@latest
 ```
+
+Or grab a static binary from [releases](https://github.com/eppser/unruly/releases)
+— linux, darwin and windows, amd64 and arm64 — or build from source:
 
 ```bash
 git clone https://github.com/eppser/unruly && cd unruly && make build
 ```
 
-Static binaries for linux, darwin and windows on amd64 and arm64:
-`make release`.
+The npm package ships no binary. It downloads the one for your platform from
+the matching release and verifies it against a checksum pinned at publish time;
+a mismatch fails the install rather than warning about it.
 
 ## Documentation
 

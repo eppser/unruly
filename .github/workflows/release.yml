@@ -1,0 +1,50 @@
+# Build the release artifacts on a tag, and attach them with their checksums.
+#
+# Built in CI rather than on a maintainer's laptop so the binaries anyone
+# downloads come from a public, inspectable job. The npm package pins these
+# checksums and refuses to install a binary that does not match, so this
+# workflow is the thing that makes that guarantee mean something.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # `git describe` needs the tags to stamp the version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          check-latest: true
+
+      # The gate stays in front of the artifacts: a tag does not get to skip
+      # the suite that everything in the README is measured by.
+      - name: verify
+        run: |
+          make lint-check
+          go test ./... -count=1
+
+      - name: cross-compile
+        run: make release
+
+      - name: checksums
+        run: cd dist && shasum -a 256 unruly_* > checksums.txt && cat checksums.txt
+
+      - name: publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/unruly_*
+            dist/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}

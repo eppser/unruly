@@ -430,9 +430,25 @@ func TestEveryFlagInTheDocsExists(t *testing.T) {
 			if !strings.Contains(line, "unruly ") {
 				continue
 			}
+			// Only what belongs to THIS command gets graded.
+			//
+			// Take the line from the `unruly` token onward, because a flag to
+			// the left of it is somebody else's: `npm install -g @eppser/unruly`
+			// contains "unruly" and `-g` is npm's. Then cut at a pipe, because
+			// a flag to the right of one is the next program's: `unruly --agent
+			// | jq -r ...` ends with jq's flag, not ours. Both of those were
+			// reported as undefined unruly flags while the documentation was
+			// correct, and the tempting fix each time was to reword the docs --
+			// which would have made the README worse to keep a test quiet.
+			cmd := line
+			if j := strings.Index(cmd, "unruly "); j >= 0 {
+				cmd = cmd[j:]
+			}
+			if j := strings.Index(cmd, "|"); j >= 0 {
+				cmd = cmd[:j]
+			}
 			// Cut anything after a comment marker: the examples annotate
 			// themselves with "# with SQL remediation".
-			cmd := line
 			if j := strings.Index(cmd, "#"); j >= 0 {
 				cmd = cmd[:j]
 			}
