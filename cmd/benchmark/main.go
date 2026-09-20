@@ -155,7 +155,7 @@ func main() {
 // One project at a time. They bind fixed host ports by design -- the answer
 // keys record them -- so running two at once is a port collision that looks
 // like a scan failure.
-func bringUp(dir string, t *eval.Target) (func(), error) {
+func bringUpOnceImpl(dir string, t *eval.Target) (func(), error) {
 	compose := filepath.Join(dir, "docker-compose.yml")
 	if _, err := os.Stat(compose); err != nil {
 		return func() {}, fmt.Errorf("no compose file")
@@ -721,4 +721,35 @@ func progressTo(w io.Writer, project, phase string, took time.Duration, err erro
 
 func progress(project, phase string, took time.Duration, err error) {
 	progressTo(os.Stderr, project, phase, took, err)
+}
+
+// bringUpOnce is a variable so the retry policy above it can be tested without
+// a Docker daemon. The policy is the part that was wrong; the compose calls are
+// not what needs exercising.
+var bringUpOnce = bringUpOnceImpl
+
+// bringUp gives a project two attempts at coming up.
+//
+// The inner function already retries `docker compose up` when compose REPORTS
+// an error. This is the other failure: compose reports success, the container
+// starts, the published port never maps, and nothing answers until the budget
+// expires. Per-phase timing across a full corpus run showed every project
+// binding in 3.8 to 6.4 seconds and exactly one per run consuming the entire
+// budget, with which one rotating between runs -- so it is the teardown-to-
+// startup sequence, not any fixture.
+//
+// Raising the budget cannot fix something that is never going to answer, which
+// is why moving it from 90s to 300s changed nothing. Tearing the attempt down
+// and starting it again can, and it costs nothing on the runs that work.
+//
+// Two attempts, not more: a project that is genuinely broken has to reach the
+// not-scored list rather than hold the run open.
+func bringUp(dir string, t *eval.Target) (func(), error) {
+	stop, err := bringUpOnce(dir, t)
+	if err == nil {
+		return stop, nil
+	}
+	// Its containers still hold the port the next attempt needs.
+	stop()
+	return bringUpOnce(dir, t)
 }
