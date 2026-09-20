@@ -109,7 +109,7 @@ func newTestbed(t *testing.T) *testbed {
 			// employee address. The mechanism under test is the same.
 			w.Write([]byte(`{"success":true,"data":{"mode":"maintenance",` +
 				`"updated_by_email":"ops.lead@example.invalid",` +
-				`"updated_at":"2026-08-21T09:14:00Z"},"error":null}`))
+				`"updated_at":"2025-03-04T09:14:00Z"},"error":null}`))
 		case "/crm/customers", "/candidates", "/invoices", "/documents", "/internal/logs":
 			// Correctly protected. These are the CONTROLS: a scan that reports
 			// them as exposed is worse than one that misses /system/mode.

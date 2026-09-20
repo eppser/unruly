@@ -21,7 +21,7 @@ import (
 // conclusion. The OpenAPI root is not the only enumeration oracle: PostgREST
 // answers a near-miss name with PGRST205 and a hint naming the real one, and
 // internal/enumerate has exploited that against Supabase for this project's
-// whole existence. Measured against the live lab on 2026-08-22:
+// whole existence. Measured against the live lab:
 //
 //	GET /rls_disable    -> PGRST205  hint "Perhaps you meant the table 'public.rls_disabled'"
 //	GET /anon_readabl   -> PGRST205  hint "Perhaps you meant the table 'public.anon_readable'"

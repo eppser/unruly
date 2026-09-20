@@ -24,7 +24,7 @@
 #      that no class is reported. Without these the project would reward a
 #      scanner that labels everything.
 #
-# Every number below was measured against the running stack on 2026-08-23, not
+# Every number below was measured against the running stack, not
 # read off the DDL:
 #   - row counts by `SELECT count(*)` in psql
 #   - read status and Content-Range by curl with `Prefer: count=exact` and
@@ -141,7 +141,7 @@ expect:
       sensitive_columns: [iban, bank_account, tax_id]
       classes: [financial, government-id]
 
-    # health had no rule at all until 2026-08-23: the renderer could print
+    # health had no rule at all until recently: the renderer could print
     # "health information" and nothing could produce it. This is the relation
     # that would have shown that, and nothing in the corpus did.
     - name: absence_records
@@ -173,7 +173,7 @@ expect:
     # A scanner that classifies only by column name reports this relation as
     # readable, describes its contents as nothing in particular, and passes
     # every other project in this corpus.
-    # MEASURED 2026-08-23, and the first draft of this key got it wrong.
+    # measured, and the first draft of this key got it wrong.
     #
     # It expected [contact, financial], on the reasoning that notiz holds an
     # email address. The scan reported financial only, and the scanner is
@@ -214,7 +214,7 @@ expect:
 
     # Every column ends in a word a careless rule treats as personal data, and
     # every one identifies a machine, a mailbox or a blockchain account. All
-    # four were classified as personal data by this scanner until 2026-08-23.
+    # four were classified as personal data by this scanner until recently.
     #
     # The relation IS reported -- it is readable and that is true -- and its
     # class list must be empty.

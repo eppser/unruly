@@ -16,7 +16,7 @@ import (
 //
 // The fixture replay in replay_test.go covers the local Supabase lab only.
 // Firebase findings address Google's endpoints, so that check skips them and
-// nothing else read them -- and the three evidence drifts found on 2026-08-22
+// nothing else read them -- and the three evidence drifts found
 // were all in code the fixture replay DOES cover, which says nothing reassuring
 // about the code it does not. One of those three was the Firestore evidence
 // dropping the __name__ projection, so replaying it would have retrieved the

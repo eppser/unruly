@@ -43,7 +43,7 @@ import (
 // Reclassifying is the one move that can shrink this number without work, so
 // it is only honest with a tripwire: the ledger row names the live test that
 // fails if the platform ever makes the finding reachable.
-// BACK TO 2 ON 2026-08-24, which is where it started.
+// BACK TO 2, which is where it started.
 //
 // It went 2 -> 3 -> 4 -> 5 as four application findings were added, each raise
 // deliberate and annotated, and each carrying the same debt: the testbed

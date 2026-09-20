@@ -61,7 +61,7 @@ surfaces answer differently, and this tool reports them differently as a
 result — which is the point: the rule is "claim what the API can distinguish",
 not "never say protected".
 
-Measured against this project on 2026-08-18:
+Measured against this project:
 
 | surface | absent | denied | Can "protected" be claimed? |
 |---|---|---|---|

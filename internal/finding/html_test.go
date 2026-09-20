@@ -25,7 +25,7 @@ func htmlFixture() []Finding {
 func render(t *testing.T, fs []Finding) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := WriteHTML(&buf, "https://app.example", "2026-08-17T00:00:00Z", fs); err != nil {
+	if err := WriteHTML(&buf, "https://app.example", "2025-03-04T00:00:00Z", fs); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	return buf.String()

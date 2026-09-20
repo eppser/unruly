@@ -112,7 +112,7 @@ func TestAuthSurfaceIsGradedAgainstARealAuthServer(t *testing.T) {
 // lab's answer key, behind a secret CI does not have.
 //
 // The fixture serves storage's RESPONSES from the gateway rather than running
-// storage-api, which was tried and did not land (docs/lessons-learned.md). What
+// storage-api, which was tried and did not land. What
 // the checks consume is the response shape, and that is what this measures. It
 // models the configuration people actually write: a bucket that accepts an
 // anonymous upload and refuses to let it be deleted again.

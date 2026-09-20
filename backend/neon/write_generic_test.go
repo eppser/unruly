@@ -75,7 +75,7 @@ func neonWriteStage(t *testing.T, url string, tables []string) WriteStage {
 //
 // An empty object needs no schema knowledge: PostgREST hands it to Postgres,
 // and the privilege check happens before any column is considered. Measured
-// against the live lab on 2026-08-22 -- 42501 on four tables with no INSERT
+// against the live lab -- 42501 on four tables with no INSERT
 // grant, 201 on the one that has it.
 func TestNeonWriteProbeInventsNoColumn(t *testing.T) {
 	rec := &writeRecorder{status: http.StatusForbidden,
@@ -167,7 +167,7 @@ func TestNeonWriteReportsNothingOnADenial(t *testing.T) {
 // the primary key is known and the DELETE can name it.
 func TestAcceptedWriteQuotesTheRowItCreated(t *testing.T) {
 	rec := &writeRecorder{status: http.StatusCreated,
-		reply: `[{"id":42,"body":null,"created_at":"2026-08-22T00:00:00Z"}]`}
+		reply: `[{"id":42,"body":null,"created_at":"2025-03-04T00:00:00Z"}]`}
 	srv := httptest.NewServer(rec.handler())
 	defer srv.Close()
 

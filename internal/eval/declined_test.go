@@ -9,8 +9,8 @@ package eval_test
 // that as a known hole.
 //
 // It was not theoretical. The preview-deployment sweep needs a site or an
-// explicit host list, returns early without one, and said nothing at all until
-// 2026-08-22 -- while historical-credentials, skipped for the identical
+// explicit host list, returns early without one, and said nothing at all
+// -- while historical-credentials, skipped for the identical
 // reason, had always been disclosed. The only difference between them was
 // which one somebody remembered to add.
 //

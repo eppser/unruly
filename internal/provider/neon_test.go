@@ -9,7 +9,7 @@ import (
 
 // A Neon Data API endpoint in a bundle is a detection; the word "neon" is not.
 //
-// Verified shape, neon.com/docs/data-api/get-started (2026-08-21):
+// Verified shape, neon.com/docs/data-api/get-started:
 //
 //	https://ep-example.apirest.us-east-1.aws.neon.tech/neondb/rest/v1/posts
 func TestNeonDetectsADataAPIEndpoint(t *testing.T) {
@@ -111,7 +111,7 @@ func TestNeonPicksAStableEndpointWhenTheBundleNamesSeveral(t *testing.T) {
 // Anything still on the list and unlisted in Cannot() fails.
 func TestNeonDeclaresEveryUnmeasuredCapability(t *testing.T) {
 	c := neon{}.Cannot()
-	// CapListing joined the measured set on 2026-08-22: the OpenAPI root is
+	// CapListing joined the measured set: the OpenAPI root is
 	// not served, which is true and was the wrong conclusion -- PostgREST's
 	// hint oracle volunteers table names on a near miss, and backend/neon now
 	// uses it through internal/enumerate unchanged.

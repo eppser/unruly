@@ -13,7 +13,7 @@ import (
 //
 // This package's whole argument is that a recorded transcript beats a
 // hand-written stub because it carries provenance: it came off the real thing.
-// Provenance decays the moment the request changes, and on 2026-08-22 it did.
+// Provenance decays the moment the request changes, and it did.
 // backend/neon's write probe stopped sending {"body":"..."} and started sending
 // {}; five tables answer 400 PGRST204 to the first and 403/42501 to the second.
 // The committed recording went on serving the PGRST204 answers, the offline

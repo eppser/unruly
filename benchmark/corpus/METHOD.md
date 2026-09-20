@@ -300,8 +300,8 @@ $ ./verify.sh
 passed: 14   failed: 0
 ```
 
-1,112 claims at the time of that run; 1,204 across sixteen projects as of
-2026-08-23, of which 1,193 hold — see README.md for the eleven that do not and
+1,112 claims at the time of that run; 1,204 across sixteen projects now, of
+which 1,193 hold — see README.md for the eleven that do not and
 why. Every project was also verified at least twice — once while it
 was being built and once cold afterwards — because the second run is where the
 `PGRST002` race, the bash 3.2 breakage and the `return=representation` probe
@@ -309,7 +309,7 @@ bug all turned up.
 
 ## What project 16 found, including about this method
 
-`16-data-classification` was added on 2026-08-23 to measure a property nothing
+`16-data-classification` was added late, to measure a property nothing
 else did: not whether a relation is reachable, but what the report says is IN
 it. Two things came out of building it.
 

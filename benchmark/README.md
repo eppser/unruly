@@ -9,8 +9,7 @@
 > derived from the tool's own output proves only that the tool agrees with
 > itself.
 >
-> **Landed 2026-08-19, extended 2026-08-23.** `benchmark/corpus/` holds 16
-> projects and 1,204 claims, verified from a cold start by
+> `benchmark/corpus/` holds 16 projects and 1,204 claims, verified from a cold start by
 > `benchmark/corpus/verify.sh`: 1,193 hold and 11 do not, both shortfalls named
 > in `corpus/README.md` rather than averaged away. Ground truth was established
 > without running this scanner: from the DDL, and then by direct `psql` and
@@ -22,7 +21,7 @@
 > The two targets below remain the realism check — a real application and a
 > real project — while the corpus is the coverage check.
 >
-> **Scored 2026-08-20, re-scored 2026-08-23.** `cmd/benchmark` runs the real
+> `cmd/benchmark` runs the real
 > binary end to end against each corpus project and grades the REPORT, so a
 > relation the scan never recovered counts as a false negative exactly as an
 > operator would experience it. Fifteen of sixteen projects, current numbers in
@@ -118,7 +117,7 @@ number. unruly's 21/21 came from a run given the SITE
 (`-u https://example-app.test`), which lets it harvest vocabulary from the
 application — an input the other tools were never handed. On the inputs they
 actually got, project reference and anon key alone, it found **19 of 21** when
-this was written and finds **21 of 21** as of 2026-08-20 (see below). The
+this was written and finds **21 of 21** today (see below). The
 conclusion survives the correction and the number does not, so the number is
 fixed here rather than left standing because it flattered.
 
@@ -136,8 +135,7 @@ cannot have classified it.
 
 ## Results
 
-Measured 2026-08-15. Each tool run once, single attempt, same target and
-credentials.
+Each tool run once, single attempt, same target and credentials.
 
 | Tool | Relations discovered | Time |
 |---|---|---|
@@ -147,7 +145,7 @@ credentials.
 | **unruly**, ref + key only | **21 / 21** | 56s |
 | **unruly**, given the site | **21 / 21** | 24s |
 
-Re-measured 2026-08-18, after the discovery changes of that day (declared API
+Re-measured after the discovery changes that followed (declared API
 origin, credential precedence, REST mount-path correction): ref and key alone
 still recovers all 21 — 7 read-exposed and 14 reported protected. The claim is
 re-run rather than carried forward, because a number nobody re-measures is a
@@ -157,7 +155,7 @@ The ref-and-key figure was 19/21 when this correction was first written. What
 closed the gap is described under the second target: the seeds were the limit,
 not the oracle.
 
-**Re-measured 2026-08-20, and it is now 21 of 21 on ref and key alone.** The
+**Re-measured again, and it is now 21 of 21 on ref and key alone.** The
 input the other tools were given no longer costs anything: 21 relations,
 19,059 requests, 26.6s, with the retry pass -- the near-miss expansion that
 fires when the first sweep finds little -- accounting for 15,180 of those
@@ -176,13 +174,13 @@ The testbed's row counts were recorded before and after and are unchanged, and
 no probe row exists: the measurement changed nothing on the project it
 measured.
 
-**Re-measured 2026-08-19**, after the day's HTTP and classification work: the
+**Re-measured** after the HTTP and classification work: the
 three application-fetching stages were moved onto one shared client, and the
 severity classifier was extended to read sampled values and to serve both
 backends. Discovery was rewritten underneath, so the number was re-run rather
 than assumed to survive.
 
-| Mode | Relations | Time (2026-08-18) | Time (2026-08-19) |
+| Mode | Relations | Time (before) | Time (after) |
 |---|---|---|---|
 | ref + key only | 21 / 21 | 56s | **26s** |
 | given the site | 21 / 21 | 24s | **23s** |
@@ -214,7 +212,7 @@ different Supabase project with independently established ground truth: 7
 relations, one `SECURITY DEFINER` routine that returns rows to anon, and one
 public bucket serving an invoice to anyone with the URL.
 
-Measured 2026-08-15, every tool given the project reference and the anon key:
+Every tool given the project reference and the anon key:
 
 | Tool | Relations | Routines | Buckets |
 |---|---|---|---|

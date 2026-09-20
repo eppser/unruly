@@ -300,7 +300,7 @@ unguarded, which is worth knowing. Only a refusal exits non-zero.
 ### A fixture that mis-records is worse than a fixture that fails
 
 `go test -race` found an unsynchronised `append` in the Neon enumeration
-fixture on 2026-08-22. The handler recorded every probed path into a captured
+fixture. The handler recorded every probed path into a captured
 slice; net/http serves each connection on its own goroutine; the stage probes
 concurrently by design. `go test` had passed. The race detector is dynamic, so
 it reported the overlap only because the scheduler happened to produce one on
@@ -461,10 +461,11 @@ constructor covers the site either way — which happened here, and was found by
 deleting the constructor call and watching the site reappear as uncovered. The
 fixture and exploitability evals are what establish reachability.
 
-**Measurements in comments have a date.** Constants like the concurrency
-default, and behaviours like "PostgREST serves GET in a read-only transaction"
-or "pg_graphql introspection is disabled", were measured against Supabase as it
-was in August 2026. Supabase can change any of them. `make saturation` re-runs
+**Measurements in comments are measurements, not guarantees.** Constants like
+the concurrency default, and behaviours like "PostgREST serves GET in a
+read-only transaction" or "pg_graphql introspection is disabled", were measured
+against Supabase as it was when the comment was written, and a vendor can
+change any of them under you. `make saturation` re-runs
 the concurrency measurement against a project you own.
 
 ### Recovering a dead Docker daemon

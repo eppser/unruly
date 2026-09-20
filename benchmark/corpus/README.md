@@ -43,7 +43,7 @@ right in fewer claims — but a project whose count is small relative to its
 surface is a project whose answer key is doing less work than it looks like it
 is.
 
-**1,193 hold; 11 do not**, measured from a cold start on 2026-08-23. This
+**1,193 hold; 11 do not**, measured from a cold start. This
 sentence used to read "every one of them passing from a cold start", and that
 had stopped being true. Naming the shortfall is the same rule the corpus
 applies to the scanner:

@@ -18,7 +18,7 @@ import (
 // PGRST205 and a hint naming the real one. internal/provider's Cannot() used to
 // declare enumeration impossible here because the OpenAPI root is not served --
 // true, and the wrong conclusion, because the root is not the only oracle.
-// Measured against the live lab on 2026-08-22: `rls_disable` draws "Perhaps you
+// Measured against the live lab: `rls_disable` draws "Perhaps you
 // meant the table 'public.rls_disabled'", and an unrelated name draws nothing,
 // which is what makes it evidence about this schema rather than noise.
 //

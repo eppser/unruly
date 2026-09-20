@@ -10,7 +10,6 @@
 
 project_ref: examplelabexamplelab
 base_url: https://examplelabexamplelab.supabase.co
-created: 2026-08-15
 notes: >
   Provisioned through the Supabase management API on the owner's own account,
   explicitly as a testbed. It holds no real personal data: every row is
@@ -253,7 +252,7 @@ known_limits:
   # Found while building the lab, and worth stating rather than discovering as
   # a mysterious zero later.
   - id: compound-routine-names-are-out-of-reach
-    status: CLOSED 2026-08-15 — admin_read_audit_log is now discovered
+    status: CLOSED — admin_read_audit_log is now discovered
     fix: >
       Two changes, and the first alone did nothing. wordlist.Compose joins
       pinned verbs to harvested nouns, which produces admin_audit_log. That
@@ -280,7 +279,7 @@ known_limits:
       candidates from the harvested set would close this.
 
   - id: buckets-are-not-enumerable
-    status: CLOSED 2026-08-15 — public-uploads is now discovered by name
+    status: CLOSED — public-uploads is now discovered by name
     detail: >
       GET /storage/v1/bucket returns [] for the anon role even when a public
       bucket exists, so unruly's storage check cannot discover
@@ -288,7 +287,7 @@ known_limits:
       is known or guessed. This is a real recall gap in the scanner, not a
       property of the lab, and the lab exists to make it visible.
 
-# pg_graphql, enabled deliberately on 2026-08-16.
+# pg_graphql, enabled deliberately.
 #
 # It is NOT on by default: this project and the reference target both answered
 # "pg_graphql extension is not enabled." until it was switched on here, which is
@@ -311,7 +310,7 @@ graphql:
   readable_anonymously: [api_tokens, customer_records, feedback_submissions]
   expected_finding: supabase-graphql-anon-read   # info: mirrors REST, no bypass
 
-# reporting schema, added 2026-08-16, exposed via
+# reporting schema, exposed via
 # ALTER ROLE authenticator SET pgrst.db_schemas = 'public, graphql_public, reporting'.
 #
 # Deliberately ADVERSARIAL, unlike the local fixture's equivalent: the table
@@ -338,7 +337,7 @@ reporting_schema:
     admin_rebuild_metrics: {security_definer: true, execute_granted_to: anon}
   expected_findings: [supabase-extra-schema-exposed, unruly-surface-not-assessed]
 
-# Realtime in a non-default schema, added 2026-08-16.
+# Realtime in a non-default schema.
 #
 # reporting.metrics is in the supabase_realtime publication, readable and
 # INSERT-able by anon, and -- unlike the rest of this schema -- named from the
@@ -383,7 +382,7 @@ realtime_in_schema:
     - {id: supabase-anon-read-exposed,      resource: reporting.metrics, severity: high}
     - {id: supabase-anon-insert-allowed,    resource: reporting.metrics, severity: critical}
 
-# user-uploads bucket, added 2026-08-16.
+# user-uploads bucket.
 #
 # Grants anon INSERT and SELECT and NOT delete, which is the storage analogue
 # of a table that accepts anonymous writes and will not give them back. It
@@ -410,7 +409,7 @@ storage_residue:
     - {id: unruly-probe-object-left-behind, severity: high}
     - {id: supabase-storage-anon-write, severity: critical}
 
-# Two probe relations for the GraphQL/REST comparison, added 2026-08-16.
+# Two probe relations for the GraphQL/REST comparison.
 #
 # supabase-graphql-rls-bypass reports a relation serving rows over pg_graphql
 # and none over REST. No scan has ever produced it, and these measure why

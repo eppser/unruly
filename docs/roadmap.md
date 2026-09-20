@@ -4,7 +4,7 @@ Work that is decided but not built. Each entry says what is missing, why it
 matters, and what it is blocked on — so an item that cannot move is
 distinguishable from one nobody has started.
 
-## What is already done, verified 2026-08-19
+## What is already done, and verified
 
 A stale to-do list costs more than it looks: it sends the next session to
 rebuild something finished, and the second implementation is rarely as good as
@@ -23,11 +23,12 @@ the first. Each line below was checked by running the code, not by reading it.
 | Evals and benchmarks out of the shipped binary | done | `go list -deps ./cmd/unruly` links neither `internal/eval` nor `internal/exploit` |
 | Supabase behind the provider seam | done | 10 stages in `backend/supabase/`, 12 `runStage` call sites; `scanTarget` 717 code lines, from 1,330 |
 
-## What landed since, verified 2026-08-22
+## What landed after that
 
 Same rule as the table above: each line was checked by running something, and
-the check is named. The dates are kept apart rather than merged, because a
-reader deciding whether to trust a row wants to know when it was last asked.
+the check is named. This table is kept apart from the one above rather than
+merged into it, because a reader deciding whether to trust a row wants to know
+which pass last asked the question.
 
 | Claim | State | How it was checked |
 |---|---|---|
@@ -215,7 +216,7 @@ None of that blocks shipping. A key behind an opt-in flag works today.
 **Blocked on:** a decision about which approach. Only the first one needs a
 domain; the others need an API key and nothing else.
 
-**Decided 2026-08-19: AgentMail (agentmail.to), measured rather than chosen on
+**Decided: AgentMail (agentmail.to), measured rather than chosen on
 its description.** It is approach 2 — a mailbox API — and it removes what made
 approach 1 attractive, since the only reason to prefer a Worker was that we own
 no domain and a mailbox API cost a subscription per project.

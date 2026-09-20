@@ -11,7 +11,7 @@ import (
 // runEdgeSurface warmed the Deno runtime first and consulted UNRULY_LIVE
 // second, so a plain `go test ./...` spent 30 seconds per Edge test waiting for
 // a host that is not running, four times over, and then skipped. Measured at
-// 120.7 seconds on 2026-08-24 -- more than half the entire offline suite, spent
+// 120.7 seconds -- more than half the entire offline suite, spent
 // proving that a service nobody started is not running.
 //
 // That is not only slow. A suite whose offline path is dominated by a

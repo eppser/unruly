@@ -15,7 +15,7 @@ import (
 // request, never a boolean" is a standing rule, and until now nothing checked
 // the second half. eval-remediation executes the -fix output and requires the
 // findings to close, which is why remediation has never drifted. Evidence had
-// no equivalent, and on 2026-08-22 three of them had drifted:
+// no equivalent, and three of them had drifted:
 //
 //	the Neon write finding published a payload the probe had stopped sending
 //	the Firestore evidence dropped the __name__ projection, so replaying it
@@ -123,7 +123,7 @@ func TestReplayPublishedRequestsReproduceTheirFindings(t *testing.T) {
 		}
 		// A request without the status it produced cannot be checked against
 		// anything: replaying it proves the command runs, and running is not
-		// reproducing. Measured on 2026-08-22: 51 findings published a command
+		// reproducing. Measured: 51 findings published a command
 		// and ONE said what it answered, so a deliberately mangled URL replayed
 		// to a 404 and this check passed it.
 		want, ok := statusOf(ev)

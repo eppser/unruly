@@ -30,7 +30,7 @@ db:
   database: fixture
 
 notes: >
-  Observed on a live Neon Data API on 2026-08-21 and reproduced here as
+  Observed on a live Neon Data API and reproduced here as
   ordinary PostgreSQL, because it is ordinary PostgreSQL: Neon's console warns
   that four tables "have RLS disabled -- all authenticated users can view all
   rows in these table(s)", and one of the four holds no GRANT and answers

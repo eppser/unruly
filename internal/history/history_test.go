@@ -91,7 +91,7 @@ func TestHostOf(t *testing.T) {
 }
 
 func TestHumanTimestamp(t *testing.T) {
-	if got := humanTimestamp("20260317185220"); got != "2026-03-17" {
+	if got := humanTimestamp("20250304185220"); got != "2025-03-04" {
 		t.Errorf("got %q", got)
 	}
 }

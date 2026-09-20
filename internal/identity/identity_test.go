@@ -22,7 +22,7 @@ func TestTheStoreIsNotReadableByOtherUsers(t *testing.T) {
 	t.Setenv("UNRULY_CONFIG_DIR", dir)
 
 	if err := Remember(Record{Provider: "supabase", Project: "abc",
-		Email: "probe@example.test", Password: "s3cret", Created: "2026-08-21"}); err != nil {
+		Email: "probe@example.test", Password: "s3cret", Created: "2025-03-04"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,7 +77,7 @@ func TestAnAccountIsReusedRatherThanRecreated(t *testing.T) {
 	t.Setenv("UNRULY_CONFIG_DIR", t.TempDir())
 
 	first := Record{Provider: "supabase", Project: "abc", Email: "first@example.test",
-		Password: "p1", Created: "2026-08-21"}
+		Password: "p1", Created: "2025-03-04"}
 	if err := Remember(first); err != nil {
 		t.Fatal(err)
 	}

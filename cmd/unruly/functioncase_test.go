@@ -16,7 +16,7 @@ import (
 // folding is what lets a harvested `Users` and a pinned `users` count once.
 // A Cloud Function name is not an identifier. It is a path segment, and
 // https://<region>-<project>.cloudfunctions.net/publicEcho answers 200 while
-// .../publicecho answers 404. Measured against the lab on 2026-08-22.
+// .../publicecho answers 404. Measured against the lab.
 //
 // So the fold silently emptied the one check that consumes this list: Firebase
 // convention is camelCase (`exports.publicEcho`, `sendInvoices`), the probe

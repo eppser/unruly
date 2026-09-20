@@ -21,7 +21,7 @@ clears `rls_on_permissive`, which anybody can.
 
 ## Where this came from
 
-Observed on a live Neon Data API on 2026-08-21. Neon's console warns that four
+Observed on a live Neon Data API. Neon's console warns that four
 tables "have RLS disabled — all authenticated users can view all rows in these
 table(s)". One of the four holds no GRANT and answers 403/42501 to every
 caller. The console reads RLS state and stops.

@@ -93,4 +93,3 @@ failure breakdown, determinism result), and prints a digest.
 - **Negative controls:** `make eval-notsupabase` must stay quiet against hosts
   that are not Supabase.
 
-Lessons from each run go in `docs/lessons-learned.md`.

@@ -39,7 +39,7 @@ func TestNeonNoLongerDeclaresWriteUnmeasurable(t *testing.T) {
 // The remaining limits must not rest on a claim we have disproved.
 //
 // Two statements in this file came from the vendor docs and are false against
-// the live project, measured 2026-08-21:
+// the live project, measured:
 //
 //   - that a request with no Authorization header maps to the `anonymous`
 //     role. It does not; every table answers 400 identically, including ones

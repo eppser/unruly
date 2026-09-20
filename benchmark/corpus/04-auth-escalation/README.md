@@ -30,7 +30,7 @@ $ curl -s -X POST -H "Content-Type: application/json" \
     -d '{"email":"stranger@example.invalid","password":"hunter"}' "$G/auth/v1/signup"
   access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ...
   expires_in:   3600
-  user.email_confirmed_at: 2026-08-19T02:10:35.173727057Z
+  user.email_confirmed_at: <timestamp>
   user.is_anonymous: False
 
 ### step 2 — what the token claims

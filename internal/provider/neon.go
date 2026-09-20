@@ -17,7 +17,7 @@ func init() { Register(neon{}) }
 // is the whole identification.
 //
 // The vendor documentation says a request with NO Authorization header maps
-// onto the `anonymous` role. Measured against a live Data API on 2026-08-21
+// onto the `anonymous` role. Measured against a live Data API
 // it does not: every table answers 400 "missing authentication credentials"
 // identically, including tables the anonymous role holds no GRANT on. That
 // uniformity is the important part -- the response carries no information
@@ -29,7 +29,7 @@ func init() { Register(neon{}) }
 // PocketBase detector documents, where the SDK constructor with an origin is
 // required precisely because the product name alone is not a deployment.
 //
-// Verified shape (neon.com/docs/data-api/get-started, 2026-08-21):
+// Verified shape (neon.com/docs/data-api/get-started):
 //
 //	https://ep-example.apirest.us-east-1.aws.neon.tech/neondb/rest/v1/posts
 //	       \_______/ \_____/                          \____/ \______/
@@ -144,7 +144,7 @@ func (neon) Cannot() map[Capability]string {
 			"not through the API, and this scan does not guess from the one to the other",
 
 		CapStorage: why + "Neon has no object storage product in the Data API surface",
-		CapExecute: why + "the /rpc surface IS served -- measured 2026-08-22: a POST to " +
+		CapExecute: why + "the /rpc surface IS served -- measured: a POST to " +
 			"a routine that cannot exist answers 404 with PostgREST's function-lookup " +
 			"error, which only a served RPC route produces. What could not be measured " +
 			"is whether anything behind it is callable, and the reason is a property of " +

@@ -24,7 +24,7 @@ func TestALoneEndpointServingSensitiveDataIsReported(t *testing.T) {
 	r := Route{
 		Base: "https://api-host.run.app", Path: "/system/mode", GET: 200,
 		Snippet: `{"success":true,"data":{"mode":"maintenance",` +
-			`"updated_by_email":"ops.lead@example.invalid","updated_at":"2026-08-21T09:14:00Z"}}`,
+			`"updated_by_email":"ops.lead@example.invalid","updated_at":"2025-03-04T09:14:00Z"}}`,
 	}
 	f, ok := standaloneExposure(r, false)
 	if !ok {

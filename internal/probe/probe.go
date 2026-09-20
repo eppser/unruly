@@ -136,7 +136,7 @@ type Relation struct {
 	// what the operator's own replay of the published command will show. A
 	// finding that prints a command and not the answer it got cannot be checked
 	// against anything -- replaying proves the command runs, and running is not
-	// reproducing. Measured 2026-08-22: 51 findings published a command and one
+	// reproducing. measured: 51 findings published a command and one
 	// stated a status, so a deliberately mangled URL replayed to 404 and the
 	// replay check passed it.
 	ReadStatus int

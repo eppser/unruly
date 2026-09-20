@@ -3,8 +3,8 @@
 Which AI app builders are popular, what database each one puts behind the apps it
 generates, and why that determines where this scanner's addressable surface is.
 
-Compiled 2026-08-17. Adoption figures for the backends are hard numbers pulled from
-the npm registry and GitHub APIs on that date. Figures for the vibe-coding platforms
+Adoption figures for the backends are hard numbers pulled from
+the npm registry and GitHub APIs on the date of compilation. Figures for the vibe-coding platforms
 themselves are **press-reported and self-reported** — private companies, no filings —
 so treat them as order-of-magnitude, not audited.
 
@@ -72,7 +72,7 @@ This is the mapping that decides scanner coverage.
 
 ## 4. Backend adoption, measured
 
-Pulled live from the npm registry and GitHub APIs, 2026-08-17.
+Pulled live from the npm registry and GitHub APIs.
 
 | Backend | npm weekly downloads | GitHub stars | Notes |
 |---|---:|---:|---|
@@ -120,7 +120,7 @@ The chain is short and each link is documented above:
 |---|---|
 | **Supabase** | Default backend for the two largest builders; the AI writes the RLS itself; 21M weekly downloads |
 | **Firebase** | Second-largest installed base, but only one builder defaults to it; web-only scanning is tractable, mobile needs APK/IPA work |
-| **Neon** via v0 | **Reclassified 2026-08-20 — see section 6.** Neon's Data API is PostgREST, on the same `/rest/v1/` mount Supabase uses. The claim that Neon has no public client API was true when this file was written and is not true now. |
+| **Neon** via v0 | **Reclassified — see section 6.** Neon's Data API is PostgREST, on the same `/rest/v1/` mount Supabase uses. The claim that Neon has no public client API was true when this file was written and is not true now. |
 | Upstash via v0 | User-selected rather than default; a Redis/Kafka HTTP API, not a relational one, so it is a different threat model |
 | Replit, Base44 | **Out of scope** — closed backends, no public client API to probe |
 
@@ -133,7 +133,7 @@ for a user who cannot review it.
 
 ## 6. Which of them speak PostgREST
 
-Added 2026-08-20. The section this file was missing, and the axis that decides how much
+The section this file was missing, and the axis that decides how much
 of this scanner transfers.
 
 Product categories are the wrong unit here. What decides whether unruly works against a
@@ -163,9 +163,8 @@ and Postgres.
 
 This section previously said Neon's documentation "does not say what happens to a request
 carrying no `Authorization` header at all", set out two threat models depending on the
-answer, and said it was an hour's work to settle on a project you own. It was settled on
-2026-08-21 against a Neon project owned by this author (`still-wildflower-86993864`), and
-the answer is the second branch.
+answer, and said it was an hour's work to settle on a project you own. It was settled
+against a Neon project owned by the author, and the answer is the second branch.
 
 **A request with no `Authorization` header does not reach an anonymous role. It is refused
 before any table is consulted:**
@@ -209,11 +208,11 @@ at the database level by the grant and by nothing this scanner sent.
 
 ## Sources
 
-Backend adoption: npm registry API, GitHub REST API (2026-08-17).
-PostgREST classification (section 6): Neon's own Data API documentation, fetched
-2026-08-20 — neon.com/docs/data-api. The headerless-request behaviour above is NOT from
-that documentation, which does not describe it: it was measured on 2026-08-21 against a
-project owned by this author, and the measurement is committed at
+Backend adoption: npm registry API, GitHub REST API.
+PostgREST classification (section 6): Neon's own Data API documentation —
+neon.com/docs/data-api. The headerless-request behaviour above is NOT from
+that documentation, which does not describe it: it was measured against a
+project owned by the author, and the measurement is committed at
 fixtures/neon/answer-key.yaml with the exchanges recorded in fixtures/neon/transcript.json. Supabase's PostgREST layer is documented at
 supabase.com/docs/guides/api. Comparison articles were read and NOT relied on: several
 state that Neon has no auto-generated API, which the vendor documentation contradicts.

@@ -134,7 +134,7 @@ way an owner-scoped Postgres table with RLS is; they are simply refused.
 - Auth / Identity Toolkit: `http://127.0.0.1:54533`
 - Emulator hub: `http://127.0.0.1:54535`
 - Image `andreysenov/firebase-tools:latest`, measured as firebase-tools
-  **15.27.0** with OpenJDK 25.0.4 on 2026-08-19. Pinned by tag rather than
+  **15.27.0** with OpenJDK 25.0.4. Pinned by tag rather than
   digest, so a future run that behaves differently should check this first.
 
 ## Running it

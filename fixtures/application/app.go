@@ -37,7 +37,7 @@ const (
 	// with no credential at all. It carries an address, which is what raises
 	// it above a status page.
 	PublicRecord = `{"success":true,"data":{"mode":"maintenance",` +
-		`"updated_by_email":"ops.lead@example.invalid","updated_at":"2026-08-21T09:14:00Z"}}`
+		`"updated_by_email":"ops.lead@example.invalid","updated_at":"2025-03-04T09:14:00Z"}}`
 
 	// BypassPath is refused to a plain request and served when a rewrite
 	// header names it -- a proxy authorising the path it received and

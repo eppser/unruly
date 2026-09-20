@@ -29,7 +29,7 @@ const probeEmail = "unruly-probe@example.invalid"
 // seconds, holds nothing, and is deleted by the scan that made it.
 //
 // Deliberately NOT hyphen-lowercase. The first spelling was
-// "unruly-probe-account-2026", which matches the shape of a finding id, and
+// "unruly-probe-account", which matches the shape of a finding id, and
 // the id-coverage guard duly reported a password as an undocumented finding
 // nothing tested. A constant that can be mistaken for an identifier will be.
 const probePassword = "unrulyProbeAccount2026"

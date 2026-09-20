@@ -9,7 +9,7 @@ import (
 
 // The committed recording must answer the request this code actually makes.
 //
-// On 2026-08-22 it stopped. WriteStage's probe changed from
+// it stopped. WriteStage's probe changed from
 // {"body":"unruly_write_probe"} to {} -- because a scanner cannot know a column
 // name and must not invent one -- and five tables answer 400 PGRST204 to the
 // first and 403/42501 to the second. The recording kept serving PGRST204, every

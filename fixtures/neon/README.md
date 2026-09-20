@@ -1,6 +1,6 @@
 # Neon Data API lab fixture
 
-Project `still-wildflower-86993864` ("unruly"), branch `production`.
+Project `<neon-project-id>` ("unruly"), branch `production`.
 Synthetic data only. Six tables: three exploitable, three protected.
 
 Ground truth is in `answer-key.yaml`; `transcript.json` is a recording of the
@@ -67,5 +67,5 @@ than by the live run, since the owner had no session row at all (the console
 authenticates separately). It verifies the fixture's seed counts before and
 after, and skips rather than pruning if the lab has already drifted.
 
-Measured on 2026-08-22: 102 sessions before, 0 after, 7 users unchanged,
+Measured: 102 sessions before, 0 after, 7 users unchanged,
 `anon_readable 2, open_guestbook 1, rls_disabled 3, rls_enforced 2` unchanged.

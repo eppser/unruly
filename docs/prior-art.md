@@ -55,8 +55,8 @@ that matter most.
 ## What appears not to exist elsewhere, stated carefully
 
 Every finding here publishes a command, and `make audit` executes those commands
-and requires them to reproduce the finding that published them. On
-2026-08-22 that check found five drifts in this project's own output, including
+and requires them to reproduce the finding that published them. That check
+once found five drifts in this project's own output, including
 a Firestore command that omitted the projection keeping it from retrieving field
 values, and a Remote Config command whose payload sat in single quotes so the
 placeholder never expanded.
@@ -70,9 +70,9 @@ this section is wrong and should be corrected rather than defended.
 
 - Matchers and extractors, template structure: deepwiki.com/projectdiscovery/nuclei
 - Template validation discipline: nuclei-templates TEMPLATE-CREATION-GUIDE.md
-- CSPM comparison and maintenance status: kloudle.com CSPM comparison, 2026
+- CSPM comparison and maintenance status: kloudle.com CSPM comparison
 - Prowler compliance-control reporting: jonathansblog.co.uk/prowler-cloud-security-auditing
 
-Read 2026-08-22. Comparison articles were read and not relied on for claims
+Comparison articles were read and not relied on for claims
 about behaviour; where this document states what a tool does, it states what its
 own documentation says it does.

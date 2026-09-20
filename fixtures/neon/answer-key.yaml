@@ -1,15 +1,15 @@
 # Ground truth for the Neon Data API fixture.
 #
-# Every line below was MEASURED against project still-wildflower-86993864 on
-# 2026-08-21, not taken from vendor documentation. Where the docs and the
+# Every line below was MEASURED against a live Neon project owned by the
+# author, not taken from vendor documentation. Where the docs and the
 # observed behaviour disagree, the observation wins and the disagreement is
 # recorded.
 
-endpoint: https://ep-weathered-star-axawuz2r.apirest.c-4.us-east-2.aws.neon.tech/neondb/rest/v1
+endpoint: https://ep-example-endpoint.apirest.c-4.us-east-2.aws.neon.tech/neondb/rest/v1
 auth:
   provider: neon_auth        # undocumented auth_provider value; keys live in
                              # neon_auth.jwks (Ed25519), not fetched over HTTP
-  url: https://ep-weathered-star-axawuz2r.neonauth.c-4.us-east-2.aws.neon.tech/neondb/auth
+  url: https://ep-example-endpoint.neonauth.c-4.us-east-2.aws.neon.tech/neondb/auth
   signup: open               # anyone on the web can sign up; no email
                              # verification required. This is what makes the
                              # escalation below reachable by a stranger.
@@ -36,7 +36,7 @@ transport:
     body_message: "Provided authentication token is not a valid JWT encoding"
 
 # The Data API's schema cache is a SNAPSHOT, and nothing an operator can reach
-# refreshes it. Measured 2026-08-22, in this order:
+# refreshes it. measured, in this order:
 #
 #   create function public.unruly_lab_open_routine()  -> POST /rpc/... 404 PGRST202
 #   notify pgrst, 'reload schema'   (PostgREST's own documented reload)
@@ -60,7 +60,7 @@ transport:
 # all, and every one of them was corroborated against the database as owner
 # rather than through the API alone.
 # The hint oracle works here, and it is the enumeration route the OpenAPI root
-# is not. Measured 2026-08-22, after an earlier note in this project wrongly
+# is not. measured, after an earlier note in this project wrongly
 # concluded from the unserved OpenAPI root that Neon could not be enumerated:
 #
 #   GET /rls_disable            -> 404 PGRST205, hint "Perhaps you meant the

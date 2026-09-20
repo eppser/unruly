@@ -30,7 +30,7 @@ notes: >
 expect:
   key_in_bundles: false
 
-  # Measured against the running emulator on 2026-08-22, by asking for each
+  # Measured against the running emulator, by asking for each
   # name unauthenticated and counting what came back. Not derived from the
   # rules files and not copied from the checks below: the checks assert status
   # codes, and a grader needs the recall denominator, so these were counted.
