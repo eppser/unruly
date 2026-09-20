@@ -36,9 +36,16 @@ func TestGovernmentIDsAreRecoveredFromTheValue(t *testing.T) {
 
 		// Brazilian CPF, two check digits mod 11.
 		{"cpf", "529.982.247-25", true},
-		{"cpf unpunctuated", "52998224725", true},
-		{"cpf with a bad check digit", "52998224726", false},
-		{"cpf of repeated digits", "11111111111", false},
+		{"cpf with a bad check digit", "529.982.247-26", false},
+		{"cpf of repeated digits", "111.111.111-11", false},
+
+		// Punctuated form only, and this expectation was reversed by
+		// measurement rather than by preference. Bare digits tagged 1.20% of
+		// random eleven-digit order numbers as a government identifier -- two
+		// mod-11 digits leave about one in a hundred and twenty. Punctuation
+		// is the second independent constraint that takes it to zero, and the
+		// cost is stated: a CPF stored as bare digits is missed.
+		{"cpf unpunctuated", "52998224725", false},
 
 		// Polish PESEL is deliberately NOT implemented, and this is the case
 		// that decided it: its check is a single mod-10 digit, so roughly one

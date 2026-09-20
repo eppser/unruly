@@ -19,9 +19,18 @@
 // IDs teaches an operator to distrust the severity column, and a severity
 // nobody trusts is worse than none. So every rule here is structural rather
 // than statistical: a card number must pass Luhn AND carry a real issuer
-// prefix, an IBAN must satisfy mod-97, a JWT's header must actually decode to
-// JSON naming an algorithm. Rules that cannot be checked that way are not
-// included, however tempting.
+// prefix and a length that issuer uses, an IBAN must satisfy mod-97, a JWT's
+// header must actually decode to JSON naming an algorithm. Rules that cannot
+// be checked that way are not included, however tempting.
+//
+// Structural does not mean infallible, and this paragraph used to imply that
+// it did. Measured against 26,000 generated values in volume_test.go, the card
+// rule tags 2.15% of random sixteen-digit strings: Luhn passes one in ten and
+// roughly a quarter of sixteen-digit strings carry an accepted issuer prefix,
+// so that product is the floor the rule can reach and a bare card number
+// offers nothing further to check. The national-identity rule reaches 0.10%
+// after three independent constraints. Both rates are pinned by that test, so
+// a rule that gets looser fails rather than drifting.
 package classify
 
 import (
@@ -467,7 +476,18 @@ func Names(names []string) []string {
 var (
 	// \b works inside JSON text too, which is where a JSONB column puts it.
 	reChinaID = regexp.MustCompile(`\b\d{17}[\dXx]\b`)
-	reCPF     = regexp.MustCompile(`\b\d{3}\.\d{3}\.\d{3}-\d{2}\b|\b\d{11}\b`)
+	// Punctuated form ONLY, and measured rather than assumed. CPF's two mod-11
+	// digits leave about one in a hundred and twenty arbitrary eleven-digit
+	// strings passing; at volume that measured 1.20% of random eleven-digit
+	// order numbers tagged as a government identifier. Punctuation is the
+	// second independent constraint, and an order number is not written
+	// 529.982.247-25.
+	//
+	// The cost is stated rather than hidden: a CPF stored as bare digits is
+	// missed. That is the trade this package makes everywhere else -- a missed
+	// class is a recall number, a false critical is a severity column nobody
+	// trusts.
+	reCPF = regexp.MustCompile(`\b\d{3}\.\d{3}\.\d{3}-\d{2}\b`)
 )
 
 func isGovernmentID(s string) bool {
@@ -511,7 +531,21 @@ func validChinaResidentID(v string) bool {
 	if year < 1900 || month < 1 || month > 12 || day < 1 || day > 31 {
 		return false
 	}
-	return true
+	// The first two digits are a province code, and only thirty-one of the
+	// hundred possible pairs are assigned. Added after measurement: the check
+	// character and the date together still tagged 0.25% of random eighteen-
+	// digit order numbers, which is a false critical on one row in four hundred.
+	return chinaProvince[v[:2]]
+}
+
+var chinaProvince = map[string]bool{
+	"11": true, "12": true, "13": true, "14": true, "15": true,
+	"21": true, "22": true, "23": true,
+	"31": true, "32": true, "33": true, "34": true, "35": true, "36": true, "37": true,
+	"41": true, "42": true, "43": true, "44": true, "45": true, "46": true,
+	"50": true, "51": true, "52": true, "53": true, "54": true,
+	"61": true, "62": true, "63": true, "64": true, "65": true,
+	"71": true, "81": true, "82": true,
 }
 
 // validCPF checks both mod-11 digits and rejects the repeated-digit sequences
