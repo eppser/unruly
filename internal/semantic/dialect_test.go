@@ -162,3 +162,41 @@ func TestTheRequestShapeFollowsTheEndpointPath(t *testing.T) {
 		})
 	}
 }
+
+// Reasoning models must be told not to reason.
+//
+// Measured against Qwen3.5-4B on Ollama, which is the configuration this
+// feature was built for. Without the flag the top token at the answer
+// position is "Thinking" or "<think>" and the answer slots never appear at
+// all: 5.3% recall and 96.2% false positives, against 90.2% and 12% for the
+// same model read correctly. The readout depends on the next token BEING the
+// answer, so a model that opens with a reasoning block has nothing to read.
+//
+// SemIf does this through the tokenizer -- apply_chat_template(...,
+// enable_thinking=False) -- which is not reachable over HTTP. Ollama exposes
+// it as `think`, and a server that does not know the field ignores it.
+func TestReasoningIsDisabledForServersThatSupportIt(t *testing.T) {
+	var seen map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&seen)
+		_ = json.NewEncoder(w).Encode(map[string]any{"logprobs": []any{map[string]any{
+			"top_logprobs": []any{map[string]any{"token": "Z", "logprob": -0.01}}}}})
+	}))
+	defer srv.Close()
+	c, _ := semantic.New(semantic.Options{Endpoint: srv.URL + "/api/generate"})
+	if _, err := c.Classify(context.Background(), "x", []string{"y"}); err != nil {
+		t.Fatal(err)
+	}
+	if seen["think"] != false {
+		t.Errorf("think = %#v, want false. A reasoning model emits a thinking block "+
+			"where the answer should be, and the readout reads that block's first "+
+			"token instead of a class", seen["think"])
+	}
+	// The chat template must still be applied: raw:true skips it, and then the
+	// prompt does not end at the assistant turn, so the next token is a
+	// newline rather than an answer.
+	if seen["raw"] == true {
+		t.Error("raw is true; without the chat template the next token is whitespace, " +
+			"not the answer slot")
+	}
+}

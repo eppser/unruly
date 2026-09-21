@@ -254,6 +254,17 @@ func (c *Classifier) request(column string, values []string) map[string]any {
 		return map[string]any{
 			"model": c.opt.Model, "prompt": prompt, "stream": false,
 			"logprobs": true, "top_logprobs": n,
+			// Reasoning off. Measured against Qwen3.5-4B: with it on, the top
+			// token at the answer position is "Thinking" and no answer slot
+			// appears -- 5.3% recall and 96.2% false positives, against 90.2%
+			// and 12% for the same model read correctly. The readout depends
+			// on the next token BEING the answer, and a model that opens with
+			// a reasoning block has nothing there to read.
+			//
+			// Not raw: the chat template has to be applied, because it is what
+			// ends the prompt at the assistant turn. Without it the next token
+			// is a newline.
+			"think":   false,
 			"options": map[string]any{"num_predict": 1, "temperature": 0},
 		}
 	case strings.Contains(c.opt.Endpoint, "/completion") &&
