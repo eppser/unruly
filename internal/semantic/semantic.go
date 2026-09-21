@@ -131,12 +131,66 @@ func New(opt Options) (*Classifier, error) {
 // Enabled reports whether a model will actually be asked.
 func (c *Classifier) Enabled() bool { return c.opt.Endpoint != "" }
 
+// apiResponse covers the three shapes a local model server actually answers
+// with. Measured rather than assumed, on this machine:
+//
+//	OpenAI /v1/completions   choices[0].logprobs.top_logprobs[0]  map of token->logprob
+//	                         vLLM and LM Studio return this. Ollama ACCEPTS the
+//	                         logprobs parameter on this endpoint and returns
+//	                         none, which is the failure this struct exists to
+//	                         notice rather than to paper over.
+//	Ollama /api/generate     logprobs[0].top_logprobs[]           list of {token, logprob}
+//	llama.cpp /completion    completion_probabilities[0].probs[]  list of {tok_str, prob}
+//
+// A server that answers in none of these shapes has given us a letter with no
+// probability behind it, and the gate is the only thing making this feature
+// safe to run.
 type apiResponse struct {
+	// OpenAI
 	Choices []struct {
 		Logprobs struct {
 			TopLogprobs []map[string]float64 `json:"top_logprobs"`
 		} `json:"logprobs"`
 	} `json:"choices"`
+	// Ollama native
+	Logprobs []struct {
+		TopLogprobs []struct {
+			Token   string  `json:"token"`
+			Logprob float64 `json:"logprob"`
+		} `json:"top_logprobs"`
+	} `json:"logprobs"`
+	// llama.cpp native
+	CompletionProbabilities []struct {
+		Probs []struct {
+			TokStr string  `json:"tok_str"`
+			Prob   float64 `json:"prob"`
+		} `json:"probs"`
+	} `json:"completion_probabilities"`
+}
+
+// weights returns token -> unnormalised weight, in whichever dialect the
+// server answered, or nil when it gave no distribution at all.
+func (r apiResponse) weights() map[string]float64 {
+	out := map[string]float64{}
+	if len(r.Choices) > 0 && len(r.Choices[0].Logprobs.TopLogprobs) > 0 {
+		for tok, lp := range r.Choices[0].Logprobs.TopLogprobs[0] {
+			out[tok] = math.Exp(lp)
+		}
+	}
+	if len(out) == 0 && len(r.Logprobs) > 0 {
+		for _, e := range r.Logprobs[0].TopLogprobs {
+			out[e.Token] = math.Exp(e.Logprob)
+		}
+	}
+	if len(out) == 0 && len(r.CompletionProbabilities) > 0 {
+		for _, e := range r.CompletionProbabilities[0].Probs {
+			out[e.TokStr] = e.Prob
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Classify returns the model's class for one column, or an empty Result when
@@ -145,14 +199,7 @@ func (c *Classifier) Classify(ctx context.Context, column string, values []strin
 	if !c.Enabled() {
 		return Result{}, nil
 	}
-	body, err := json.Marshal(map[string]any{
-		"model":       c.opt.Model,
-		"prompt":      c.render(column, values),
-		"max_tokens":  1,
-		"temperature": 0,
-		"logprobs":    len(classes),
-		"stream":      false,
-	})
+	body, err := json.Marshal(c.request(column, values))
 	if err != nil {
 		return Result{}, err
 	}
@@ -173,11 +220,54 @@ func (c *Classifier) Classify(ctx context.Context, column string, values []strin
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return Result{}, fmt.Errorf("classifier endpoint: %w", err)
 	}
-	if len(out.Choices) == 0 || len(out.Choices[0].Logprobs.TopLogprobs) == 0 {
-		return Result{}, fmt.Errorf("classifier endpoint returned no logprobs; " +
-			"the server must be started with logprobs support or this cannot be gated")
+	w := out.weights()
+	if w == nil {
+		return Result{}, fmt.Errorf("classifier endpoint returned a token but no logprobs, " +
+			"so the confidence gate cannot be applied and the model would run unguarded. " +
+			"Ollama's OpenAI-compatible /v1/completions accepts the parameter and returns " +
+			"nothing: point -classifier at its native /api/generate instead, or use " +
+			"llama.cpp's server")
 	}
-	return c.pick(out.Choices[0].Logprobs.TopLogprobs[0]), nil
+	return c.pick(w), nil
+}
+
+// request builds the body for the dialect the endpoint PATH names.
+//
+// Sending every dialect's knobs together was the first attempt and cannot
+// work: OpenAI's `logprobs` is how MANY logprobs to return and Ollama's is
+// WHETHER to return them, so the same key is a number in one dialect and a
+// boolean in the other. A real Ollama answered
+//
+//	json: cannot unmarshal number into Go struct field GenerateRequest.logprobs of type bool
+//
+// and no unit test caught it, because stubs decode into permissive structs.
+// The URL already says which server this is, so it chooses.
+//
+// Temperature is zero in whichever place the dialect reads it. Sampling would
+// make the same column classify differently between runs, and byte-identical
+// output is a published property of this scanner.
+func (c *Classifier) request(column string, values []string) map[string]any {
+	prompt := c.render(column, values)
+	n := len(classes)
+	switch {
+	case strings.Contains(c.opt.Endpoint, "/api/generate"):
+		return map[string]any{
+			"model": c.opt.Model, "prompt": prompt, "stream": false,
+			"logprobs": true, "top_logprobs": n,
+			"options": map[string]any{"num_predict": 1, "temperature": 0},
+		}
+	case strings.Contains(c.opt.Endpoint, "/completion") &&
+		!strings.Contains(c.opt.Endpoint, "/v1/"):
+		return map[string]any{
+			"prompt": prompt, "n_predict": 1, "n_probs": n,
+			"temperature": 0, "stream": false,
+		}
+	default: // OpenAI: vLLM, LM Studio, llama.cpp's compatibility endpoint
+		return map[string]any{
+			"model": c.opt.Model, "prompt": prompt, "stream": false,
+			"max_tokens": 1, "temperature": 0, "logprobs": n,
+		}
+	}
 }
 
 // pick softmaxes over the DECLARED slots only.
@@ -191,13 +281,13 @@ func (c *Classifier) pick(top map[string]float64) Result {
 	sum, best, bestP := 0.0, "", 0.0
 	weights := make(map[string]float64, len(classes))
 	for _, cl := range classes {
-		lp, ok := top[cl.Slot]
+		w, ok := top[cl.Slot]
 		if !ok {
-			if lp, ok = top[" "+cl.Slot]; !ok {
+			// Some tokenizers emit the leading space as part of the token.
+			if w, ok = top[" "+cl.Slot]; !ok {
 				continue
 			}
 		}
-		w := math.Exp(lp)
 		weights[cl.Name] = w
 		sum += w
 	}
