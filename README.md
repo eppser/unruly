@@ -139,6 +139,19 @@ themselves and from the column names. "`payment_methods` is readable" and
 "`payment_methods` is readable and contains card numbers" are different
 incidents, and only one of them wakes someone up.
 
+Those classes come from **structural proof** — Luhn plus an issuer length,
+mod-97, a JWT header that decodes — which is why they work in any language
+without reading a column name, and why they measure 0.4% false positives
+across 500 ordinary columns. It is also why they cannot see a street address
+or a diagnosis: that text carries nothing checkable.
+
+`-classifier` closes that gap with a **local** model you already run, and is
+off by default. The rules always win — the model is asked only about columns
+they left unclassified — and what it returns lands in a separate
+`model_classes` field, because an opinion is not a proof. Measured on 550
+columns across 22 data classes and 25 languages: **14.9% → 88.0% recall**, at
+16% false positives, 340ms per column. Nothing leaves your machine.
+
 ### ⚡ Parallel by default
 64 concurrent probes per scan, tuned to PostgREST's measured saturation point,
 under one shared rate limit and one request budget. `-c` and `-rl` are promises
@@ -439,6 +452,8 @@ unruly -u https://app.example.com -fix         # with SQL remediation
 unruly -u https://your-app.com -redact      # keep the verdict, drop the rows
 unruly -u https://your-app.com -measure     # prove exposure without retrieving a row
 unruly -l targets.txt -json -o report.jsonl # an estate, machine-readable
+
+unruly -u https://your-app.com -classifier auto   # + a local model for what rules cannot read
 
 unruly -u https://your-app.com -principal a=<jwt> -principal b=<jwt>   # cross-identity
 unruly -u https://your-app.com -write -yes-i-own-this                  # write probes

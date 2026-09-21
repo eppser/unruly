@@ -123,6 +123,46 @@ Their results are **unioned**, not preferred. They were combined with an
 value finding: a table with an `email` column and a service_role key in a
 `notes` column reported contact data and stayed silent about the credential.
 
+### A third classifier, optional and separable
+
+`-classifier` points at a LOCAL model server and asks it about columns the two
+rules above left unclassified. Off by default, and everything it produces
+lands in `model_classes`, never in `classes`.
+
+The two lists are kept apart permanently because they carry different weight.
+A class in `classes` was proven: a card number passed Luhn and an issuer-length
+check, an IBAN satisfied mod-97, a JWT header decoded. A class in
+`model_classes` is a model's opinion about a street address or a diagnosis --
+text carrying nothing checkable. Measured across 500 ordinary columns, the
+rules tagged 2 and the model tagged 80.
+
+Three guarantees, each held by a test rather than by care:
+
+  * A column the rules classified is never sent to the model. Not preferred
+    over, not compared against -- never asked.
+  * A class arrives only above `-classifier-threshold` (default 80).
+  * `model_classes` is `omitempty`, so a scan without a model writes the bytes
+    it always wrote.
+
+**Measured**, on 550 positives and 500 negatives across 22 data classes and 25
+languages, through this code path against Ollama:
+
+| | recall | false positives |
+|---|---:|---:|
+| rules alone | 14.9% | 0.4% |
+| rules + Qwen3.5-4B | **88.0%** | 16.4% |
+
+**The model matters more than any other choice here.** The same benchmark with
+`llama3.2:3b` returns 4.4% recall and tags 89% of ordinary columns -- it
+contributes nothing and destroys precision. A 4B-class model is the floor:
+below it, the ability to answer "none" disappears before accuracy does.
+
+Two settings are load-bearing and are sent automatically. Reasoning must be
+disabled, or a reasoning model emits a thinking block where the answer should
+be and no class is readable at all. And the prompt demands a bare letter:
+without that the model starts a sentence, the correct class ranks second, and
+a right answer is discarded as unconfident.
+
 ### What precision costs, and what it is worth
 
 Every rule here is structural rather than statistical, and rules that cannot be
