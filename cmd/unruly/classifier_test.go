@@ -47,3 +47,41 @@ func TestTheClassifierFlagSaysWhatItChanges(t *testing.T) {
 		}
 	}
 }
+
+// "auto" is resolved to a discovered endpoint, and an empty one stays empty.
+//
+// Resolution happens once, before the scan, so a run either has a classifier
+// or does not. Discovering per-column would make the report depend on when a
+// server happened to come up.
+func TestAutoResolvesToADiscoveredEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, discovered, want string
+		wantWarn                   bool
+	}{
+		{"auto with a server present", "auto", "http://127.0.0.1:11434/api/generate",
+			"http://127.0.0.1:11434/api/generate", false},
+		{"auto with nothing listening", "auto", "", "", true},
+		{"an explicit url is not probed", "http://host:9/v1/completions", "SHOULD-NOT-BE-USED",
+			"http://host:9/v1/completions", false},
+		{"empty stays empty", "", "SHOULD-NOT-BE-USED", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probed := false
+			got, warn := resolveClassifier(tc.in, func() string {
+				probed = true
+				return tc.discovered
+			})
+			if got != tc.want {
+				t.Errorf("resolved %q, want %q", got, tc.want)
+			}
+			if (warn != "") != tc.wantWarn {
+				t.Errorf("warning %q, wantWarn=%v: an operator who asked for auto and got "+
+					"nothing must be told, or they will read a rule-only report as a full one",
+					warn, tc.wantWarn)
+			}
+			if tc.in != "auto" && probed {
+				t.Error("probed loopback when the operator did not ask for auto")
+			}
+		})
+	}
+}

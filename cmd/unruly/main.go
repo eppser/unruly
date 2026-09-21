@@ -189,6 +189,28 @@ type options struct {
 	classifierThreshold int
 }
 
+// resolveClassifier turns -classifier into an endpoint, once, before the scan.
+//
+// "auto" asks discover to look; anything else is taken literally and nothing
+// is probed. Resolving once rather than per column keeps a run's behaviour
+// fixed: a report should not depend on when a model server happened to start.
+//
+// A failed auto returns a warning rather than an error. The scan is still
+// worth running -- the rules are the part that proves things -- but an
+// operator who asked for a classifier and silently got none would read a
+// rule-only report as a complete one.
+func resolveClassifier(flag string, discover func() string) (endpoint, warning string) {
+	if flag != "auto" {
+		return flag, ""
+	}
+	if ep := discover(); ep != "" {
+		return ep, ""
+	}
+	return "", "-classifier auto found no local model server on loopback; " +
+		"continuing with the deterministic rules only. Start one (ollama serve, " +
+		"or llama-server --port 8080) or pass the endpoint directly."
+}
+
 // newFlagSet registers every flag.
 //
 // Extracted from main so the flag surface can be tested: a previous commit
@@ -377,7 +399,8 @@ func newFlagSet(o *options) *goflags.FlagSet {
 	// produces lands in a separate field and only above the gate.
 	fs.CreateGroup("classifier", "Data classification (optional)",
 		fs.StringVar(&o.classifier, "classifier", "",
-			"URL of a LOCAL model server used to classify columns the deterministic rules "+
+			"URL of a LOCAL model server, or \"auto\" to look for one on loopback, used to "+
+				"classify columns the deterministic rules "+
 				"cannot read, such as addresses and diagnoses. Off by default. The rules "+
 				"always win: the model is asked only about columns they left unclassified, "+
 				"and what it returns is reported separately as model-derived. Works with "+
