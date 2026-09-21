@@ -7,6 +7,7 @@ import (
 	"github.com/eppser/unruly/internal/history"
 	"github.com/eppser/unruly/internal/preview"
 	"github.com/eppser/unruly/internal/probe"
+	"github.com/eppser/unruly/internal/semantic"
 	"github.com/eppser/unruly/internal/subdomain"
 	"github.com/eppser/unruly/internal/surface"
 	"github.com/eppser/unruly/internal/wordlist"
@@ -49,6 +50,7 @@ type Config struct {
 
 	Concurrency     int
 	SampleRows      int
+	Classifier      semantic.Asker
 	MaxRelation     int
 	MaxRPC          int
 	MaxColumnProbes int
@@ -118,6 +120,7 @@ func Stages(cfg Config) []scan.Stage {
 				NoResidue:       cfg.NoResidue,
 				Measure:         cfg.Measure,
 				MaxColumnProbes: cfg.MaxColumnProbes,
+				Classifier:      cfg.Classifier,
 			},
 		},
 		SchemasStage{
@@ -125,6 +128,7 @@ func Stages(cfg Config) []scan.Stage {
 			Write: cfg.Write, NoResidue: cfg.NoResidue, Measure: cfg.Measure,
 			Invoke: cfg.Invoke, Redact: cfg.Redact,
 			SampleRows: cfg.SampleRows, MaxColumnProbes: cfg.MaxColumnProbes,
+			Classifier:    cfg.Classifier,
 			ExtraRoutines: extra, RPCRoutines: rpc,
 		},
 		SurfaceStage{

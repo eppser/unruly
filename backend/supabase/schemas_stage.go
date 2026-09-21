@@ -10,6 +10,7 @@ import (
 	"github.com/eppser/unruly/internal/finding"
 	"github.com/eppser/unruly/internal/probe"
 	"github.com/eppser/unruly/internal/schemas"
+	"github.com/eppser/unruly/internal/semantic"
 	"github.com/eppser/unruly/internal/surface"
 	"github.com/eppser/unruly/internal/wordlist"
 	"github.com/eppser/unruly/scan"
@@ -25,6 +26,7 @@ import (
 // exist, so this costs one request on projects that expose nothing extra.
 type SchemasStage struct {
 	Client          *client.Client
+	Classifier      semantic.Asker
 	Concurrency     int
 	Write           bool
 	NoResidue       bool
@@ -194,6 +196,7 @@ func spentOn(r surface.Result, budget int) int {
 func (s SchemasStage) probeOptions(schema string) probe.Options {
 	return probe.Options{
 		Write:           s.Write,
+		Classifier:      s.Classifier,
 		SampleRows:      s.SampleRows,
 		Concurrency:     s.Concurrency,
 		NoResidue:       s.NoResidue,

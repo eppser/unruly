@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/eppser/unruly/internal/client"
+	"github.com/eppser/unruly/internal/semantic"
 )
 
 // SeedSet preserves provenance while providers derive their candidate names.
@@ -39,6 +40,10 @@ type Controls struct {
 	SkipRealtime bool
 	Subdomains   bool
 	History      bool
+	// Classifier is an optional local model consulted about columns the
+	// deterministic rules could not read. nil is the default and a working
+	// no-op; a backend that ignores it simply reports rule classes only.
+	Classifier semantic.Asker
 }
 
 // Deployment describes application-level context a backend may use for

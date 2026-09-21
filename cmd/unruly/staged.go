@@ -37,6 +37,9 @@ func seamInputsFrom(o *options, seeds, harvested, supplied []string, c *client.C
 			NoResidue: o.noResidue, Measure: o.measure,
 			SkipRealtime: o.skipRealtime, Subdomains: o.subdomains,
 			History: o.checkHistory,
+			// Resolved once in main, so the whole scan either has a
+			// classifier or does not.
+			Classifier: o.classifierClient,
 		},
 		Limits: scan.Limits{Relations: o.maxRelation, RPC: o.maxRPC,
 			Columns: o.maxColProbe, Collections: o.maxCollections,

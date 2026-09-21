@@ -40,6 +40,7 @@ import (
 	"github.com/eppser/unruly/internal/client"
 	"github.com/eppser/unruly/internal/finding"
 	"github.com/eppser/unruly/internal/postgrest"
+	"github.com/eppser/unruly/internal/semantic"
 )
 
 // Options configures probing.
@@ -49,6 +50,10 @@ type Options struct {
 	Write bool
 	// SampleRows is how many real rows to quote as evidence.
 	SampleRows int
+	// Classifier is an optional local model asked about columns the
+	// deterministic rules could not read. nil, and a disabled one, are both
+	// no-ops: this feature is off unless an operator configures an endpoint.
+	Classifier semantic.Asker
 	// Concurrency bounds in-flight probes.
 	Concurrency int
 	// Redact suppresses sampled values in evidence. The rows are still
@@ -170,8 +175,13 @@ type Relation struct {
 	// there is nothing to look at, and the finding says so rather than
 	// implying the rows were clean.
 	SensitiveValues []string
-	CleanupErr      string
-	requests        int
+	// ModelClasses names kinds a LOCAL MODEL suggested for columns neither the
+	// name rules nor the value rules could read. Empty unless -classifier is
+	// configured, and never merged into the two above: an operator has to be
+	// able to tell a mod-97 check from an opinion about a street address.
+	ModelClasses []string
+	CleanupErr   string
+	requests     int
 }
 
 // Qualified is the name to put in a report and in SQL: schema-qualified
@@ -186,6 +196,27 @@ type Relation struct {
 // Kinds only, never values -- the point of reporting a kind is that the report
 // does not become a second copy of the leak, and -redact must not be able to
 // leave a card number behind in a field called Classes.
+// classifyWithModel fills ModelClasses for one relation, where a classifier
+// is configured and the rules left columns unread.
+//
+// Best effort by design. A model that is slow, down, or wrong costs this
+// relation its model classes and nothing else: the scan's findings come from
+// the rules, and losing a scan because an optional sidecar is unavailable is
+// not a trade this tool makes. The error is dropped here rather than
+// propagated for the same reason -- Augment already returns partial results
+// alongside it, and the caller has no better decision to make than "continue".
+//
+// A relation with no sampled rows is skipped. There is nothing to classify,
+// and the request would be spent on an empty relation.
+func classifyWithModel(ctx context.Context, c semantic.Asker, rel *Relation) {
+	if c == nil || !c.Enabled() || len(rel.Sample) == 0 {
+		return
+	}
+	cols, vals, rules := semantic.FromSample(rel.Sample, rel.Sensitive)
+	got, _ := semantic.Augment(ctx, c, cols, vals, rules)
+	rel.ModelClasses = got
+}
+
 func classesOf(r Relation) []string {
 	seen := map[string]bool{}
 	for _, pair := range r.Sensitive {
@@ -393,6 +424,8 @@ func probeOne(ctx context.Context, c *client.Client, name string, o Options, bud
 			// Over rows this scan already retrieved: no extra requests, and
 			// nothing kept but the kind names.
 			rel.SensitiveValues = classify.Kinds(rel.Sample)
+			// And, only where those left a column unread, the optional model.
+			classifyWithModel(ctx, o.Classifier, &rel)
 		}
 		if rel.Read == postgrest.ReadExposed && o.Measure {
 			if budget.take(len(sensitiveCandidates)) {
@@ -1357,13 +1390,14 @@ func readFinding(baseURL string, rel Relation, redact bool) finding.Finding {
 			Request: fmt.Sprintf("curl -sS '%s?select=*&limit=%d' -H 'apikey: $SUPABASE_ANON_KEY'%s%s",
 				restURL(baseURL, rel.Name), rel.evidenceLimit(), rel.profileHeader(),
 				rel.countHeader()),
-			Status:   rel.ReadStatus,
-			Rows:     rel.Rows,
-			Classes:  classesOf(rel),
-			Columns:  rel.Columns,
-			Sample:   sample,
-			Reason:   reason,
-			Response: jsonPreview(sample),
+			Status:       rel.ReadStatus,
+			Rows:         rel.Rows,
+			Classes:      classesOf(rel),
+			ModelClasses: rel.ModelClasses,
+			Columns:      rel.Columns,
+			Sample:       sample,
+			Reason:       reason,
+			Response:     jsonPreview(sample),
 		},
 	}
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/eppser/unruly/internal/mailbox"
 	"github.com/eppser/unruly/internal/probe"
 	"github.com/eppser/unruly/internal/provider"
+	"github.com/eppser/unruly/internal/semantic"
 	"github.com/eppser/unruly/internal/wordlist"
 	"github.com/eppser/unruly/scan"
 )
@@ -187,6 +188,10 @@ type options struct {
 	classifier          string
 	classifierModel     string
 	classifierThreshold int
+	// classifierClient is built once from the flags above, after -classifier
+	// auto has been resolved. nil means the feature is off, which is the
+	// default and a working no-op everywhere it is read.
+	classifierClient *semantic.Classifier
 }
 
 // resolveClassifier turns -classifier into an endpoint, once, before the scan.
@@ -454,6 +459,35 @@ func main() {
 		// an unwritable config file is a scanner that cannot run in exactly
 		// the environments it is meant to run in. Warn once and continue.
 		gologger.Warning().Msgf("could not write the default config file (%s); continuing", err)
+	}
+
+	// Resolve -classifier once, here, so the whole scan either has a model or
+	// does not. Doing it per relation would make a report depend on when a
+	// server happened to start.
+	if ep, warn := resolveClassifier(o.classifier, func() string {
+		return semantic.Discover(semantic.DefaultHosts(), 2*time.Second)
+	}); warn != "" {
+		gologger.Warning().Msg(warn)
+	} else if ep != "" {
+		c, err := semantic.New(semantic.Options{
+			Endpoint: ep, Model: o.classifierModel,
+			Threshold: float64(o.classifierThreshold) / 100,
+			// The operator's -timeout, not the package default. A zero here
+			// substitutes silently, so the flag would appear to work and bind
+			// nothing -- which is the failure the controls audit exists for.
+			//
+			// Floored at 30s because this is a forward pass on the operator's
+			// own hardware, not a request to a scanned target: the measured
+			// range is 44ms to 508ms per column, but a cold model load is tens
+			// of seconds and -timeout 5 is about a target that will not answer.
+			Timeout: max(time.Duration(o.timeout)*time.Second, 30*time.Second),
+		})
+		if err != nil {
+			gologger.Fatal().Msgf("-classifier: %v", err)
+		}
+		o.classifierClient = c
+		gologger.Info().Msgf("data classification: rules, plus %s above %d%% confidence",
+			ep, o.classifierThreshold)
 	}
 
 	client.Version = version

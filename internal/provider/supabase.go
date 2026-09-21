@@ -138,6 +138,7 @@ func (supabase) Stages(d Detection, in scan.Inputs) []scan.Stage {
 		MaxColumnProbes: in.Limits.Columns,
 		Write:           write, Invoke: in.Controls.Invoke, NoResidue: in.Controls.NoResidue,
 		Measure: in.Controls.Measure, Redact: in.Redact,
+		Classifier:     in.Controls.Classifier,
 		SkipRealtime:   in.Controls.SkipRealtime,
 		SkipSubdomains: !in.Controls.Subdomains,
 		CheckHistory:   in.Controls.History,
