@@ -188,3 +188,35 @@ func TestThePromptDemandsABareLetter(t *testing.T) {
 		t.Errorf("the prompt does not forbid anything but the letter:\n%s", p)
 	}
 }
+
+// A nil *Classifier carried in an Asker interface must behave as "off".
+//
+// This is the bug that made every default scan panic. main holds a
+// *semantic.Classifier and assigns it to scan.Controls.Classifier, which is an
+// Asker interface. A typed nil pointer inside an interface is NOT nil, so the
+// `c == nil` guard at every call site is false and Enabled() dereferences a nil
+// receiver.
+//
+// The existing test passed an UNTYPED nil, which is a different value and
+// genuinely nil, so it never reproduced this. Only a full scan did -- the
+// corpus benchmark came back at 0.0% read-exposure recall because every scan
+// crashed partway through.
+func TestANilClassifierInAnInterfaceIsOffRatherThanAPanic(t *testing.T) {
+	var c *semantic.Classifier // typed nil, as main holds before -classifier resolves
+	var a semantic.Asker = c
+
+	if a == nil {
+		t.Fatal("a typed nil in an interface should not compare equal to nil; " +
+			"if this ever passes, the bug this test exists for cannot happen")
+	}
+	if a.Enabled() {
+		t.Error("a nil classifier reports enabled")
+	}
+	got, err := a.Classify(context.Background(), "anschrift", []string{"Hauptstrasse 14"})
+	if err != nil {
+		t.Errorf("a nil classifier must be a no-op, not an error: %v", err)
+	}
+	if got.Class != "" {
+		t.Errorf("a nil classifier classified %q", got.Class)
+	}
+}

@@ -136,7 +136,14 @@ func New(opt Options) (*Classifier, error) {
 }
 
 // Enabled reports whether a model will actually be asked.
-func (c *Classifier) Enabled() bool { return c.opt.Endpoint != "" }
+//
+// Nil-receiver safe, deliberately. Callers hold this as an Asker interface,
+// and a nil *Classifier inside an interface is NOT equal to nil -- so their
+// `c == nil` guard does not fire and this method is entered with a nil
+// receiver. That made every scan without -classifier panic, and the corpus
+// benchmark reported 0.0% read-exposure recall because each run crashed
+// partway. A test with an untyped nil cannot reproduce it.
+func (c *Classifier) Enabled() bool { return c != nil && c.opt.Endpoint != "" }
 
 // apiResponse covers the three shapes a local model server actually answers
 // with. Measured rather than assumed, on this machine:
@@ -203,6 +210,7 @@ func (r apiResponse) weights() map[string]float64 {
 // Classify returns the model's class for one column, or an empty Result when
 // it is disabled, declines, or falls below the gate.
 func (c *Classifier) Classify(ctx context.Context, column string, values []string) (Result, error) {
+	// Enabled() is nil-receiver safe, so this covers a nil *Classifier too.
 	if !c.Enabled() {
 		return Result{}, nil
 	}
