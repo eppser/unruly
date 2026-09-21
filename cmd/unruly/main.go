@@ -181,10 +181,20 @@ type options struct {
 	// for a single target (the operator meant something else) and merely
 	// dropped for a list entry (the other entries are still worth scanning).
 	inList bool
+
+	// Data classification by a local model. Empty endpoint means off, which is
+	// the default and must stay a working no-op.
+	classifier          string
+	classifierModel     string
+	classifierThreshold int
 }
 
-func main() {
-	o := &options{}
+// newFlagSet registers every flag.
+//
+// Extracted from main so the flag surface can be tested: a previous commit
+// advertised -classifier in an error message before the flag existed, and the
+// only check that noticed was a source-parsing audit.
+func newFlagSet(o *options) *goflags.FlagSet {
 	fs := goflags.NewFlagSet()
 	fs.SetDescription("unruly — deterministic Supabase misconfiguration scanner\n\n" + examples)
 
@@ -356,12 +366,45 @@ func main() {
 		fs.BoolVar(&o.stats, "stats", false, "print scan statistics"),
 	)
 
+	// Optional, off by default, and separate from everything above it: this is
+	// the only group that can put a statement in a report that was not proven.
+	//
+	// The rules are structural -- Luhn plus an issuer length, mod-97, a JWT
+	// header that decodes -- and measure 2 false positives across 500 ordinary
+	// columns. They are also blind to a street address or a diagnosis, which
+	// carry nothing checkable: 14.9% recall across 22 data classes. A local
+	// model closes most of that gap and brings its own error rate, so what it
+	// produces lands in a separate field and only above the gate.
+	fs.CreateGroup("classifier", "Data classification (optional)",
+		fs.StringVar(&o.classifier, "classifier", "",
+			"URL of a LOCAL model server used to classify columns the deterministic rules "+
+				"cannot read, such as addresses and diagnoses. Off by default. The rules "+
+				"always win: the model is asked only about columns they left unclassified, "+
+				"and what it returns is reported separately as model-derived. Works with "+
+				"llama.cpp (/completion), Ollama (/api/generate) and anything speaking "+
+				"OpenAI /v1/completions -- the server must return logprobs"),
+		fs.StringVar(&o.classifierModel, "classifier-model", "",
+			"model name to request, for servers that host several (Ollama, vLLM)"),
+		// goflags has no float, and an integer percent is the better interface
+		// anyway: -classifier-threshold 80 reads as a threshold, 0.80 reads as
+		// a magic number.
+		fs.IntVar(&o.classifierThreshold, "classifier-threshold", 80,
+			"minimum confidence percent before a model class is reported; below this the "+
+				"column is left unclassified rather than guessed at"),
+	)
+
 	fs.CreateGroup("debug", "Debug",
 		fs.BoolVar(&o.silent, "silent", false, "show only findings"),
 		fs.BoolVarP(&o.noColor, "no-color", "nc", false, "disable colour"),
 		fs.BoolVarP(&o.verbose, "verbose", "v", false, "verbose output"),
 		fs.BoolVar(&o.showVersion, "version", false, "show version"),
 	)
+	return fs
+}
+
+func main() {
+	o := &options{}
+	fs := newFlagSet(o)
 
 	// goflags builds its flag.FlagSet with flag.ExitOnError, so an unknown flag
 	// exits 2 -- which is this program's code for "findings at high severity or
