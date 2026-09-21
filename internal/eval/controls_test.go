@@ -181,6 +181,14 @@ func clientExemption(path string) (bool, string) {
 		// the thing being measured.
 		return true, "build-time only; its client waits for a local fixture it " +
 			"started, and the graded traffic is the scanner's own"
+	case strings.Contains(path, "internal/semantic/"):
+		// Its endpoint is a model server the OPERATOR is running, configured
+		// by them and usually on loopback. -rate-limit exists to pace what a
+		// scan sends at somebody else's project; this sends nothing at
+		// anybody's, and pacing it would only slow the operator's own
+		// hardware. The request volume is bounded by the number of columns the
+		// rules could not classify, not by a wordlist.
+		return true, "the endpoint is the operator's own model server, not a scanned target"
 	case strings.Contains(path, "cmd/estate/"):
 		// Not a stage, and never aimed at a scanned project. It summarises
 		// reports a scan already wrote, and its single request goes to
@@ -427,6 +435,11 @@ func exprText(fset *token.FileSet, src []byte, e ast.Expr) string {
 // adding a package here is a deliberate claim somebody can check, whereas
 // omitting a package from a hand-written list of things to test is invisible.
 var writeExemptPackages = map[string]string{
+	"semantic": "its POST goes to a language model the OPERATOR is running, carries " +
+		"only a column name and the values the scan already retrieved, and asks for one " +
+		"token back. -no-residue is a promise about the TARGET, and this request never " +
+		"reaches it. Nothing is created anywhere: the endpoint is stateless inference, " +
+		"so there is no artefact to delete and none to report.",
 	"selfcheck": "writes only to a relation whose name cannot exist, so no row can " +
 		"be created regardless of the target's schema",
 	"exploit": "the independent exploit harness, run only by an operator who asked " +
