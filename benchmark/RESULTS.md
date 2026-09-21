@@ -1,6 +1,6 @@
 # Benchmark: unruly against the corpus
 
-commit: `ddf8efd` (clean)
+commit: `bb47786` (clean)
 go: `go1.26.0`
 
 Every number here is the END-TO-END scanner run as an operator runs
@@ -43,10 +43,10 @@ difference between this and the fixture evals.
 | `07-rewriting-proxy` | read-exposure | 100% | 100% | — | — |
 | `07-rewriting-proxy` | write-exposure | 100% | 100% | — | — |
 | `07-rewriting-proxy` | protected-not-flagged | 100% | 100% | — | — |
-| `08-rate-limited` | relation-discovery | n/a | n/a | `api_tokens`, `audit_events`, `employee_records`, `feature_flags` +8 more | — |
+| `08-rate-limited` | relation-discovery | n/a | n/a | `api_tokens`, `audit_events`, `customers`, `employee_records` +8 more | — |
 | `08-rate-limited` | read-exposure | n/a | n/a | — | — |
 | `08-rate-limited` | write-exposure | n/a | n/a | `support_tickets` | — |
-| `08-rate-limited` | protected-not-flagged | n/a | n/a | — | `customers` |
+| `08-rate-limited` | protected-not-flagged | n/a | n/a | — | `inventory` |
 | `09-huge-schema` | relation-discovery | 69% | n/a (sample) | `kv_089941`, `kv_7da565`, `kv_b9d403`, `t1` +4 more | — |
 | `09-huge-schema` | read-exposure | 60% | n/a (sample) | `kv_089941`, `kv_7da565`, `kv_b9d403`, `t1` +2 more | — |
 | `09-huge-schema` | write-exposure | 100% | 100% | — | — |
