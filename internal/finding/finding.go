@@ -109,6 +109,19 @@ type Evidence struct {
 	// column names was absent from the table, silently, in a column headed
 	// HOLDS. A renderer that has to parse prose will do that again.
 	Classes []string `json:"classes,omitempty"`
+	// ModelClasses names kinds a language model suggested for columns the
+	// RULES could not read, and is empty unless -classifier is configured.
+	//
+	// Separate from Classes, permanently, because the two carry different
+	// weight. A class in Classes was proven: a card number passed Luhn and an
+	// issuer-length check, an IBAN satisfied mod-97, a JWT header decoded. A
+	// class here is a model's opinion about a street address or a diagnosis --
+	// text that carries nothing checkable. Measured across 500 ordinary
+	// columns, the rules tagged 2 and the best model tested tagged 60.
+	//
+	// omitempty is the guarantee that turning the feature off costs nothing:
+	// a scan without a model writes the bytes it always wrote.
+	ModelClasses []string `json:"model_classes,omitempty"`
 }
 
 // Finding is one result. Field order is stable for reproducible JSON.
