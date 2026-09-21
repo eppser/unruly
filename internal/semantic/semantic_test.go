@@ -157,3 +157,34 @@ func lnf(p float64) float64 {
 	}
 	return math.Log(p)
 }
+
+// The prompt must demand a bare letter, or probability leaks to prose.
+//
+// Measured against Qwen3.5-4B. Without the instruction the top token for a
+// column called national_id is "The" -- the model starting a sentence -- with
+// the correct slot second. Renormalised over the declared slots that is 0.649,
+// under the 0.80 gate, so a correct answer is discarded as unconfident. With
+// the instruction the same column reads 0.978.
+//
+// This is what the 20-point gap against the reference implementation turned
+// out to be: not quantization, not the criteria text, but a prompt that let
+// the model answer in prose.
+func TestThePromptDemandsABareLetter(t *testing.T) {
+	c, err := semantic.New(semantic.Options{Endpoint: "http://example.invalid/v1/completions"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := c.Request("anschrift", []string{"Hauptstrasse 14"})
+	p, _ := body["prompt"].(string)
+	if p == "" {
+		t.Fatal("no prompt in the request body")
+	}
+	low := strings.ToLower(p)
+	if !strings.Contains(low, "one letter") {
+		t.Errorf("the prompt does not ask for one letter, so the model answers in prose "+
+			"and the correct slot loses the mass that would clear the gate:\n%s", p)
+	}
+	if !strings.Contains(low, "nothing else") {
+		t.Errorf("the prompt does not forbid anything but the letter:\n%s", p)
+	}
+}

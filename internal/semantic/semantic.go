@@ -120,8 +120,15 @@ func New(opt Options) (*Classifier, error) {
 		return nil, fmt.Errorf("endpoint %q is not an http url", opt.Endpoint)
 	}
 	var b strings.Builder
+	// "One letter and nothing else" is load bearing, not politeness. Without
+	// it the model starts a sentence -- the top token for a column called
+	// national_id is "The" -- and the correct slot, ranked second, renormalises
+	// to 0.649 and is discarded by the 0.80 gate. With it the same column reads
+	// 0.978. That single sentence was most of a 20-point recall gap against the
+	// reference implementation.
 	b.WriteString("A column was read from a database table. Given its name and the " +
-		"values sampled from it, choose the single class of sensitive data it holds.\n\n")
+		"values sampled from it, choose the single class of sensitive data it holds.\n" +
+		"Reply with exactly one letter from the list and nothing else.\n\n")
 	for _, c := range classes {
 		fmt.Fprintf(&b, "%s. %s\n", c.Slot, c.Description)
 	}
@@ -199,7 +206,7 @@ func (c *Classifier) Classify(ctx context.Context, column string, values []strin
 	if !c.Enabled() {
 		return Result{}, nil
 	}
-	body, err := json.Marshal(c.request(column, values))
+	body, err := json.Marshal(c.Request(column, values))
 	if err != nil {
 		return Result{}, err
 	}
@@ -246,7 +253,8 @@ func (c *Classifier) Classify(ctx context.Context, column string, values []strin
 // Temperature is zero in whichever place the dialect reads it. Sampling would
 // make the same column classify differently between runs, and byte-identical
 // output is a published property of this scanner.
-func (c *Classifier) request(column string, values []string) map[string]any {
+// Request is exported so the prompt can be asserted on without a server.
+func (c *Classifier) Request(column string, values []string) map[string]any {
 	prompt := c.render(column, values)
 	n := len(classes)
 	switch {
