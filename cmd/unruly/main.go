@@ -469,6 +469,16 @@ func main() {
 	}); warn != "" {
 		gologger.Warning().Msg(warn)
 	} else if ep != "" {
+		// Pick a model when the operator did not name one. Ollama answers 404
+		// without one, so auto that stops at the endpoint leaves the feature
+		// silently doing nothing while the line below claims it is on.
+		if o.classifierModel == "" {
+			m, warn := semantic.PickModel(ep, 5*time.Second)
+			if warn != "" {
+				gologger.Warning().Msg(warn)
+			}
+			o.classifierModel = m
+		}
 		c, err := semantic.New(semantic.Options{
 			Endpoint: ep, Model: o.classifierModel,
 			Threshold: float64(o.classifierThreshold) / 100,
@@ -486,8 +496,12 @@ func main() {
 			gologger.Fatal().Msgf("-classifier: %v", err)
 		}
 		o.classifierClient = c
-		gologger.Info().Msgf("data classification: rules, plus %s above %d%% confidence",
-			ep, o.classifierThreshold)
+		named := o.classifierModel
+		if named == "" {
+			named = "the server's loaded model"
+		}
+		gologger.Info().Msgf("data classification: rules, plus %s via %s above %d%% confidence",
+			named, ep, o.classifierThreshold)
 	}
 
 	client.Version = version

@@ -14,7 +14,7 @@ import (
 // returns logprobs -- the second accepts the parameter and silently drops it,
 // which would leave the confidence gate with nothing to gate on. Discovering
 // the server and then guessing its endpoint would find the wrong one.
-var probes = []struct {
+var serverProbes = []struct {
 	path, completion string
 }{
 	{"/api/version", "/api/generate"}, // Ollama
@@ -48,7 +48,7 @@ func DefaultHosts() []string {
 func Discover(hosts []string, timeout time.Duration) string {
 	c := &http.Client{Timeout: timeout}
 	for _, host := range hosts {
-		for _, p := range probes {
+		for _, p := range serverProbes {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+p.path, nil)
 			if err != nil {
