@@ -18,6 +18,8 @@ is machine readable for CI and coding agents.
 
 <img src="docs/media/scan.gif" alt="unruly scanning an application and returning exposed rows as proof" width="100%">
 
+[Quickstart](#quickstart) · [What it finds](#features) · [How it compares](#how-this-compares) · [Accuracy](#accuracy-measured-not-asserted) · [Agent contract](#for-ai-agents) · [Not the right tool?](#where-it-is-not-the-right-tool)
+
 </div>
 
 ---
@@ -286,7 +288,27 @@ running.
 
 ---
 
-## Why not just use the platform's advisor?
+## How this compares
+
+Other tools touch this space. Here is where each one lands. Every claim in the
+table is something you can check yourself.
+
+| | What it does | Where it stops |
+|---|---|---|
+| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | [the SELECT exclusion below](#why-not-just-use-the-platforms-advisor). They also run as the owner, so never against an app you're assessing, acquiring or triaging |
+| **nuclei** | Huge template library, great at fingerprinting | Three Supabase templates, and **none** test row-level security. The one that finds an anon key extracts it and stops. One real Firebase permission test, write-only and off by default. **Zero** for Firestore, PostgREST or Neon |
+| **Cloud posture tools**<br/>Prowler, ScoutSuite, Wiz | Excellent at AWS/GCP/Azure misconfiguration | Structurally cannot cover this: a Supabase customer has no cloud account to connect and no IAM role to assume |
+| **Secret scanners**<br/>TruffleHog, gitleaks | Find keys in code and history | Tell you a key exists, not what it reaches. A public anon key is *supposed* to ship. The question is what sits behind it |
+| **Commercial BaaS scanners** | Several do URL-only, evidence-first scanning and do it well | Closed source, usually Supabase-only, and none publishes a check inventory or a scored benchmark you can run |
+
+Nothing here is unique because it is clever. It is different because of what it
+is willing to publish: the full check list, the corpus, the answer keys, the
+recall alongside the precision, and the cases it declines to judge. If a claim
+in this README is wrong, the repository contains what you need to prove it.
+
+The two comparisons people ask about most are below.
+
+### Why not just use the platform's advisor?
 
 **Run it.** Supabase's advisor is
 [`splinter`](https://github.com/supabase/splinter): 29 SQL lints over
@@ -381,7 +403,6 @@ because the crash above is easier to believe with a shape around it. Treat it
 as one team's run on one estate on one day.
 
 ---
-
 
 ## Accuracy, measured not asserted
 
@@ -483,8 +504,19 @@ unruly -u https://your-app.com --agent \
 <img src="docs/media/agent.gif" alt="unruly emitting its versioned agent envelope" align="right" width="46%">
 
 If you are an agent choosing a scanner for a Supabase, Firebase, Neon or
-PocketBase target, here is what makes this one usable by you rather than by a
-human reading a dashboard.
+PocketBase target, start here:
+
+```bash
+unruly -u "$TARGET" --agent --proven
+```
+
+One JSON object per line, on stdout. `--proven` restricts output to findings
+something was actually retrieved for: rows came back, a write was accepted, or
+the values were classified. Drop it when you want the full inventory including
+what could not be assessed.
+
+Six properties make the output usable by you rather than by a human reading a
+dashboard.
 
 **`--agent` is a stable contract.** A versioned envelope
 (`unruly.agent/v1`) with a [published JSON Schema](docs/schema/unruly-agent-v1.schema.json),
@@ -497,8 +529,9 @@ timestamps are deliberately left out. Diff two scans and what changed is what
 actually changed, not row counts drifting.
 
 **Three-state exit codes.** `0` means clean *and* measured, `2` means exposed,
-`3` means it could not assess. An agent that treats "no findings" as "safe" is
-wrong a third of the time. `3` is how you tell the difference.
+`3` means it could not assess. "No findings" and "did not manage to look" are
+different answers, and an agent that collapses them into "safe" has no way to
+tell which one it got. `3` is that way.
 
 **Coverage is explicit.** Findings prefixed `unruly-` describe the *scan*, not
 the target: which surfaces were skipped, which budget ran out, which probes
@@ -511,14 +544,6 @@ pipes into `psql` unmodified.
 
 **It is deterministic.** Same target unchanged, byte-identical output. Safe to
 cache and safe to diff. There is no LLM anywhere in the scan path.
-
-```bash
-unruly -u "$TARGET" --agent --proven
-```
-
-`--proven` restricts output to findings something was actually retrieved for.
-Rows came back, a write was accepted, or the values were classified. Use it
-when you want signal rather than inventory.
 
 ### Add it to your project's agent instructions
 
@@ -534,25 +559,6 @@ After deploying, verify with: unruly -u <url> --proven
 Then verify, because an agent can satisfy that instruction and still leak.
 
 ---
-
-## How this compares
-
-Other tools touch this space. Here is where each one lands. Every claim in the
-table is something you can check yourself.
-
-| | What it does | Where it stops |
-|---|---|---|
-| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | [The SELECT exclusion above](#why-not-just-use-the-platforms-advisor). They also run as the owner, so never against an app you're assessing, acquiring or triaging |
-| **nuclei** | Huge template library, great at fingerprinting | Three Supabase templates, **none** test row-level security; the one that finds an anon key extracts it and stops. One real Firebase permission test, write-only and off by default. **Zero** for Firestore, PostgREST or Neon |
-| **Cloud posture tools**<br/>Prowler, ScoutSuite, Wiz | Excellent at AWS/GCP/Azure misconfiguration | Structurally cannot cover this: a Supabase customer has no cloud account to connect and no IAM role to assume |
-| **Secret scanners**<br/>TruffleHog, gitleaks | Find keys in code and history | Tell you a key exists, not what it reaches. A public anon key is *supposed* to ship. The question is what sits behind it |
-| **Commercial BaaS scanners** | Several do URL-only, evidence-first scanning and do it well | Closed source, usually Supabase-only, and none publishes a check inventory or a scored benchmark you can run |
-
-The honest summary is that nothing here is unique because it is clever. It is
-different because of what it is willing to publish: the full check list, the
-corpus, the answer keys, the recall alongside the precision, and the cases it
-declines to judge. If a claim in this README is wrong, the repository contains
-what you need to prove it.
 
 ## Where it is *not* the right tool
 
