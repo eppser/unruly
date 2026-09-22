@@ -141,6 +141,18 @@ var plainData = []struct {
 	{"pii", "personal names and dates of birth"},
 	{"contact", "email addresses or phone numbers"},
 	{"location", "postal addresses or coordinates"},
+	// The eight below are reachable only through -classifier: the structural
+	// rules cannot prove any of them, because none carries a checksum. Without
+	// a phrase here a model answer is dropped with no trace, which is how a
+	// scan can spend 340ms a column and print nothing.
+	{"communications", "private messages or correspondence"},
+	{"device-id", "device or session identifiers"},
+	{"behavioural", "records of what someone did"},
+	{"media-file", "files somebody uploaded"},
+	{"employment", "employment records"},
+	{"education", "education records"},
+	{"biometric", "biometric data"},
+	{"criminal", "criminal records"},
 }
 
 // Plain builds the whole report. Empty when nothing reachable was found, so a
@@ -236,10 +248,26 @@ func kindsOf(f Finding) []string {
 	for _, s := range sensitiveTags(f) {
 		seen[s] = true
 	}
+	// A model's answer is reported, and marked. Its own classes are kept
+	// separate from the proven ones so a reader can tell a mod-97 check from
+	// an opinion: measured across 500 ordinary columns, the rules tagged 2 and
+	// the model tagged 80. A class the rules already proved is not repeated
+	// with a question mark beside it.
+	guessed := map[string]bool{}
+	for _, c := range f.Evidence.ModelClasses {
+		if !seen[c] {
+			guessed[c] = true
+		}
+	}
 	var out []string
 	for _, p := range plainData {
 		if seen[p.tag] {
 			out = append(out, p.phrase)
+		}
+	}
+	for _, p := range plainData {
+		if guessed[p.tag] {
+			out = append(out, p.phrase+" (model?)")
 		}
 	}
 	return out
