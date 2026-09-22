@@ -39,6 +39,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -89,6 +90,34 @@ type finding struct {
 	// Columns names only, never values, so the page can say how wide the
 	// exposure is without widening it.
 	Columns []string `json:"columns,omitempty"`
+	// SampleValues carries REAL values, keyed by column, for one purpose: the
+	// optional model needs something to classify and it runs in this browser.
+	// They never reach a server, because there is none, and the page must
+	// never render them -- what it renders is Examples, which is masked. The
+	// two fields exist separately so that distinction is visible here rather
+	// than resting on a caller's discipline.
+	SampleValues map[string][]string `json:"sample_values,omitempty"`
+	// Preview is one MASKED value per column, for every readable table rather
+	// than only the ones a rule recognised. Most tables hold nothing
+	// structural, and "readable" on its own reads as harmless.
+	Preview []browserscan.Field `json:"preview,omitempty"`
+}
+
+// valuesOf collects the sampled values per column, for the model to read.
+// Capped at three per column: enough to classify, and the same number the CLI
+// samples.
+func valuesOf(rows []map[string]any) map[string][]string {
+	out := map[string][]string{}
+	for _, r := range rows {
+		for c, v := range r {
+			s, ok := v.(string)
+			if !ok || s == "" || len(out[c]) >= 3 {
+				continue
+			}
+			out[c] = append(out[c], s)
+		}
+	}
+	return out
 }
 
 // columnsOf names the columns a sample came back with.
@@ -217,11 +246,51 @@ func get(c *http.Client, u string) (string, error) {
 func main() {
 	js.Global().Set("unrulyScan", js.FuncOf(scan))
 	js.Global().Set("unrulyDiscover", js.FuncOf(discoverJS))
+	// The model runs in JavaScript, because WebGPU does. But the taxonomy, the
+	// prompt and the gate stay HERE, in tested Go, so the page cannot quietly
+	// grow a second opinion about what counts as a finding.
+	js.Global().Set("unrulyModelPrompt", js.FuncOf(modelPromptJS))
+	js.Global().Set("unrulyPick", js.FuncOf(pickJS))
 	js.Global().Set("unrulyVersion", js.ValueOf(version))
 	select {} // the Go runtime must stay alive for the exported func to work
 }
 
 var version = "dev"
+
+// modelPromptJS(column, valuesCSV) returns the prompt for one column.
+func modelPromptJS(this js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return ""
+	}
+	var vals []string
+	if v := args[1].String(); v != "" {
+		vals = strings.Split(v, " | ")
+	}
+	return js.ValueOf(browserscan.ModelPrompt(args[0].String(), vals))
+}
+
+// pickJS(topLogprobsJSON, threshold) renormalises over the declared slots and
+// applies the gate, with the same code the tests cover.
+//
+// The page hands over whatever the runtime returned, as {token: logprob}. It
+// does not decide anything: a page that computed its own confidence would be
+// a second implementation of the only thing keeping the model's false
+// positives out of the report.
+func pickJS(this js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return js.ValueOf(map[string]any{"class": "", "p": 0.0})
+	}
+	var raw map[string]float64
+	if err := json.Unmarshal([]byte(args[0].String()), &raw); err != nil {
+		return js.ValueOf(map[string]any{"class": "", "p": 0.0})
+	}
+	w := make(map[string]float64, len(raw))
+	for tok, lp := range raw {
+		w[tok] = math.Exp(lp)
+	}
+	name, p := browserscan.PickClass(w, args[1].Float())
+	return js.ValueOf(map[string]any{"class": name, "p": p})
+}
 
 // scan(baseURL, anonKey, onProgress, onDone) is what the page calls.
 //
@@ -401,6 +470,8 @@ func probe(c *http.Client, base, key, name string) (r struct {
 			f.Kinds = classify.Kinds(sample)
 			f.Examples = browserscan.Examples(sample, 2)
 			f.Columns = columnsOf(sample)
+			f.SampleValues = valuesOf(sample)
+			f.Preview = browserscan.Preview(sample, 10)
 		}
 	case postgrest.ReadEmpty:
 		f.State = "empty"

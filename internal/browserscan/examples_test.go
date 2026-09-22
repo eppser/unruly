@@ -85,3 +85,73 @@ func TestExamplesAreGroupedByKindAndMasked(t *testing.T) {
 		t.Error(`"none" is not a kind worth showing and must not appear`)
 	}
 }
+
+// Every readable table gets a preview, not only the ones a rule recognised.
+//
+// "readable" with nothing beside it reads as harmless. Showing one masked
+// value per column is what turns an abstract finding into "that is my customer
+// list", and most tables hold nothing a structural rule can name, so keying
+// this off classification would leave the majority blank.
+func TestEveryColumnGetsAMaskedPreview(t *testing.T) {
+	rows := []map[string]any{
+		{"id": "8814", "title": "Spring campaign", "status": "draft", "views": float64(12)},
+	}
+	got := browserscan.Preview(rows, 8)
+	if len(got) == 0 {
+		t.Fatal("no preview for a table whose columns no rule classifies, which is " +
+			"most tables")
+	}
+	cols := map[string]string{}
+	for _, p := range got {
+		cols[p.Column] = p.Value
+	}
+	for _, want := range []string{"id", "title", "status", "views"} {
+		if _, ok := cols[want]; !ok {
+			t.Errorf("column %q has no preview", want)
+		}
+	}
+	if v := cols["title"]; v == "Spring campaign" {
+		t.Errorf("title preview %q is the raw value", v)
+	}
+	if !strings.Contains(cols["title"], "•") {
+		t.Errorf("title preview %q is not masked", cols["title"])
+	}
+}
+
+func TestPreviewIsCappedAndOrdered(t *testing.T) {
+	row := map[string]any{}
+	for _, c := range []string{"e", "d", "c", "b", "a"} {
+		row[c] = "value-" + c
+	}
+	got := browserscan.Preview([]map[string]any{row}, 3)
+	if len(got) != 3 {
+		t.Fatalf("cap 3 returned %d", len(got))
+	}
+	if got[0].Column != "a" || got[1].Column != "b" {
+		t.Errorf("columns not in stable order: %v, %v", got[0].Column, got[1].Column)
+	}
+}
+
+// A masked timestamp or UUID is safe and useless.
+//
+// The first browser run previewed created_at as "•••• 0:00" and id as
+// "•••• 768d". Both are correctly masked and neither tells the reader
+// anything, and on a wide table most columns look like that. Describing the
+// SHAPE is both more useful and strictly safer, because it reveals nothing at
+// all.
+func TestStructuralNoiseIsDescribedRatherThanMasked(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"2026-09-22T18:14:02.318Z", "a date"},
+		{"2026-09-22 18:14:02", "a date"},
+		{"768d3b71-9f2e-4a55-8c31-2b9f4e77502d", "an ID"},
+		{"true", "true"},
+	} {
+		if got := browserscan.Mask(tc.in); got != tc.want {
+			t.Errorf("Mask(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	// And a real value is still masked rather than described.
+	if got := browserscan.Mask("anna.becker@nordwind-logistik.de"); !strings.Contains(got, "•") {
+		t.Errorf("a real value was described instead of masked: %q", got)
+	}
+}

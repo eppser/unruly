@@ -33,14 +33,25 @@ a:hover{text-decoration:underline}
 
 /* ---------- hero ---------- */
 header{padding:clamp(48px,10vw,88px) 0 0; text-align:center}
-.brand{
-  display:inline-flex; align-items:center; gap:9px; margin-bottom:24px;
-  font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--ink-2);
+.logo{display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:10px}
+.logo .mark{
+  width:54px; height:54px; border-radius:16px; color:#fff; display:grid; place-items:center;
+  font-size:31px; font-weight:700; line-height:1;
+  background:linear-gradient(145deg,#1d1d1f,#3a3a3d);
+  box-shadow:0 2px 6px rgba(0,0,0,.18), 0 10px 26px rgba(0,0,0,.14);
 }
-.brand .mark{
-  width:26px; height:26px; border-radius:8px; background:var(--ink); color:#fff;
-  display:grid; place-items:center; font-size:14px; font-weight:700;
+.logo .word{font-size:40px; font-weight:700; letter-spacing:-.035em; color:var(--ink)}
+.ghlink{
+  display:inline-flex; align-items:center; gap:6px; margin:0 0 34px;
+  font-size:12.5px; color:var(--ink-3); font-weight:500;
 }
+.ghlink:hover{color:var(--ink-2); text-decoration:none}
+.chip-h{font-size:11.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
+  color:#a6a6ab; margin:26px 0 9px}
+.ico{width:17px; height:17px; border-radius:5px; display:grid; place-items:center;
+  font-size:10.5px; font-weight:700; color:#fff; flex:0 0 auto}
+.tick{font-size:11px; font-weight:600; color:var(--ink-3); margin-left:2px}
+.chip .tick{opacity:.85}
 h1{
   margin:0 0 16px; font-weight:600; letter-spacing:-.028em;
   font-size:clamp(35px,6.6vw,58px); line-height:1.05;
@@ -52,14 +63,20 @@ h1 .grad{
 .sub{margin:0 auto; max-width:34ch; color:var(--ink-2); font-size:clamp(17px,2.3vw,20px); line-height:1.45}
 
 /* ---------- chips ---------- */
-.chips{display:flex; flex-wrap:wrap; gap:7px; justify-content:center; margin:26px 0 0}
+.chips{display:flex; flex-wrap:wrap; gap:7px; justify-content:center; margin:0}
 .chip{
   display:inline-flex; align-items:center; gap:6px; padding:6px 13px; border-radius:99px;
   background:var(--bg-2); border:1px solid var(--line-2); font-size:13.5px; font-weight:500; color:var(--ink-2);
 }
 .chip .d{width:6px; height:6px; border-radius:50%; background:var(--ok)}
-.chip.off{opacity:.6}
+.chip.off{opacity:.55}
 .chip.off .d{background:var(--ink-3)}
+.prev{padding:0 18px 14px; display:grid; gap:5px}
+.prev .r{display:flex; gap:12px; font:500 12.5px/1.5 ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+.prev .c{color:var(--ink-3); min-width:118px; flex:0 0 auto; text-align:right}
+.prev .v{color:var(--ink-2); word-break:break-all}
+.prev-h{padding:14px 18px 6px; font-size:11.5px; font-weight:700; letter-spacing:.07em;
+  text-transform:uppercase; color:#a6a6ab}
 
 /* ---------- card / form ---------- */
 .card{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--sh-1); padding:24px}
@@ -160,6 +177,7 @@ pre{margin:0; padding:15px 16px; overflow-x:auto; border-radius:12px; background
 .callout{border-radius:16px; padding:19px 20px; font-size:14.5px; line-height:1.6; border:1px solid}
 .callout.amber{background:var(--amber-bg); border-color:#f0e2c4; color:var(--ink-2)}
 .callout.plain{background:var(--bg-2); border-color:var(--line-2); color:var(--ink-2)}
+.callout.ok{background:var(--ok-bg); border-color:var(--ok-line); color:var(--ink-2)}
 .callout strong{color:var(--ink)}
 .err{background:var(--danger-bg); border:1px solid var(--danger-line); color:var(--danger);
   border-radius:16px; padding:17px 19px; font-size:15px; margin-top:20px; line-height:1.55}
@@ -183,14 +201,32 @@ footer{margin-top:60px; padding-top:32px; border-top:1px solid var(--line-2); te
 <div class="wrap">
 
 <header>
-  <div class="brand"><span class="mark">u</span> unruly</div>
+  <div class="logo">
+    <span class="mark">u</span>
+    <span class="word">unruly</span>
+  </div>
+  <a class="ghlink" href="https://github.com/eppser/unruly">
+    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    github.com/eppser/unruly
+  </a>
   <h1>Is your database<br><span class="grad">open to the internet?</span></h1>
   <p class="sub">These platforms put your data online behind one key. See what a stranger can read.</p>
+
+  <p class="chip-h">Built for apps made with</p>
   <div class="chips">
-    <span class="chip"><span class="d"></span>Supabase</span>
-    <span class="chip off"><span class="d"></span>Firebase &middot; CLI</span>
-    <span class="chip off"><span class="d"></span>Neon &middot; CLI</span>
-    <span class="chip off"><span class="d"></span>PocketBase &middot; CLI</span>
+    <span class="chip"><span class="ico" style="background:#f0562e">L</span>Lovable</span>
+    <span class="chip"><span class="ico" style="background:#1389fd">B</span>Bolt.new</span>
+    <span class="chip"><span class="ico" style="background:#000">V</span>v0</span>
+    <span class="chip"><span class="ico" style="background:#0d1117">C</span>Cursor</span>
+    <span class="chip"><span class="ico" style="background:#d97757">C</span>Claude Code</span>
+  </div>
+
+  <p class="chip-h">Databases</p>
+  <div class="chips">
+    <span class="chip"><span class="ico" style="background:#3ecf8e">S</span>Supabase<span class="tick">✓ here</span></span>
+    <span class="chip off"><span class="ico" style="background:#ffa000">F</span>Firebase<span class="tick">CLI</span></span>
+    <span class="chip off"><span class="ico" style="background:#00e599;color:#000">N</span>Neon<span class="tick">CLI</span></span>
+    <span class="chip off"><span class="ico" style="background:#b8dbe4;color:#000">P</span>PocketBase<span class="tick">CLI</span></span>
   </div>
 </header>
 
@@ -217,15 +253,17 @@ footer{margin-top:60px; padding-top:32px; border-top:1px solid var(--line-2); te
           structure, in any language. <strong>Limited:</strong> cannot see addresses or
           diagnoses, which have no structure to check.</span>
         </label>
-        <input type="radio" name="cls" id="c2" value="model" disabled>
+        <input type="radio" name="cls" id="c2" value="model">
         <label for="c2">
-          <span class="t">Language model <span class="pill">not yet</span></span>
-          <span class="d">Would also catch addresses and diagnoses. Needs a 350MB download and
-          WebGPU, and the browser runtime returns only 5 options where this uses 16, which
-          weakens the confidence gate. Not shipped until that is measured.</span>
+          <span class="t">Language model <span class="pill">~400MB</span></span>
+          <span class="d">Also catches names and addresses, which have no structure to check.
+          Downloads once, then runs on your graphics card. <strong>Limited:</strong> needs
+          WebGPU, and answers a coarser question, five classes instead of sixteen, because the
+          browser runtime returns only five scores.</span>
         </label>
       </div>
     </div>
+    <div id="modelStatus" class="callout plain" hidden style="margin-top:14px"></div>
   </div>
 
   <details class="card" style="margin-top:14px; padding:0">
@@ -307,6 +345,30 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">"
   }
 })();
 
+// Loading starts when the model is CHOSEN, not when the scan reaches it.
+// A 400MB download that begins silently after a scan looks like a hang, and
+// the person has no way to tell it apart from one.
+document.querySelectorAll('input[name=cls]').forEach(r => {
+  r.addEventListener("change", async () => {
+    const box = $("#modelStatus");
+    if (r.value !== "model" || !r.checked) { box.hidden = true; return; }
+    box.hidden = false;
+    box.className = "callout plain";
+    box.innerHTML = `<span class="pulse"></span>Preparing the model…`;
+    try {
+      await ensureModel(t => { box.innerHTML = `<span class="pulse"></span>${esc(t)}`; });
+      box.className = "callout ok";
+      box.innerHTML = `<strong>Model ready.</strong> It stays cached in this browser, so the
+        download happens once.`;
+    } catch (e) {
+      box.className = "callout amber";
+      box.innerHTML = `<strong>The model cannot run here.</strong> ${esc(String(e.message || e))}
+        The built-in rules will be used instead.`;
+      $("#c1").checked = true;
+    }
+  });
+});
+
 $("#form").addEventListener("submit", e => {
   e.preventDefault();
   const site = $("#site").value.trim();
@@ -352,6 +414,41 @@ $("#goManual").addEventListener("click", () => {
   startScan(url, key, "", "");
 });
 
+// ---------------------------------------------------------------- model ----
+// WebGPU and the model live here because they have to. The taxonomy, the
+// prompt and the confidence gate stay in Go: unrulyModelPrompt() and
+// unrulyPick() are the same tested code the CLI's readout uses, so this page
+// cannot grow its own opinion about what counts as a finding.
+const GATE = 0.80;
+const MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+let engine = null;
+
+async function ensureModel(onProgress){
+  if (engine) return engine;
+  if (!navigator.gpu) throw new Error("This browser has no WebGPU, so a model cannot run here. Chrome, Edge and Safari 18 support it; Firefox needs it enabled.");
+  const webllm = await import("https://esm.run/@mlc-ai/web-llm");
+  engine = await webllm.CreateMLCEngine(MODEL_ID, {
+    initProgressCallback: r => onProgress(r.text || "Downloading the model…"),
+  });
+  return engine;
+}
+
+// classifyOne asks the model about one column and returns a class, or "" for
+// no opinion. Anything that goes wrong returns "" rather than a guess.
+async function classifyOne(eng, column, values){
+  const prompt = unrulyModelPrompt(column, (values || []).join(" | "));
+  const out = await eng.completions.create({
+    prompt, max_tokens: 1, temperature: 0, logprobs: true, top_logprobs: 5,
+  });
+  const lp = out?.choices?.[0]?.logprobs?.content?.[0]?.top_logprobs
+          || out?.choices?.[0]?.logprobs?.top_logprobs;
+  if (!lp) return "";
+  const m = {};
+  for (const e of lp) if (e && e.token != null) m[e.token] = e.logprob;
+  const r = unrulyPick(JSON.stringify(m), GATE);
+  return r.class || "";
+}
+
 const shortName = u => { try { return new URL(u).pathname.split("/").pop() || u; } catch { return u; } };
 
 function startScan(base, key, bundleText, note){
@@ -364,11 +461,49 @@ function startScan(base, key, bundleText, note){
       $("#fill").style.width = Math.round(p.done / p.total * 100) + "%";
       $("#count").textContent = `Checked ${p.done} of ${p.total} names`;
     },
-    r => {
+    async r => {
+      if (r.error) { $("#scanning").hidden = true; return fail("The scan stopped: " + r.error); }
+      const d = JSON.parse(r.result);
+      const useModel = document.querySelector('input[name=cls]:checked')?.value === "model";
+      if (useModel && (d.exposed || []).length) {
+        try {
+          await runModel(d);
+        } catch (e) {
+          // A model that will not load costs this scan its model classes and
+          // nothing else. The rules already ran, and losing a result because
+          // an optional extra failed is not a trade worth making.
+          d.modelError = String(e.message || e);
+        }
+      }
       $("#scanning").hidden = true;
-      if (r.error) return fail("The scan stopped: " + r.error);
-      render(JSON.parse(r.result));
+      render(d);
     }, bundleText);
+}
+
+// runModel adds a second opinion for columns the RULES could not read. The
+// rules always win: a column they classified is never sent to the model,
+// because they measure 0.4% false positives and the model far more.
+async function runModel(d){
+  $("#note").hidden = false;
+  const eng = await ensureModel(t => { $("#count").textContent = t; });
+  const todo = [];
+  for (const t of d.exposed) {
+    const already = new Set(t.kinds || []);
+    for (const c of (t.columns || [])) {
+      if (!already.size || !already.has(c)) todo.push([t, c]);
+    }
+  }
+  let done = 0;
+  for (const [t, col] of todo) {
+    $("#fill").style.width = Math.round(++done / todo.length * 100) + "%";
+    $("#count").textContent = `Reading column ${done} of ${todo.length} with the model`;
+    const cls = await classifyOne(eng, col, t.sample_values?.[col]);
+    if (cls) (t.model_kinds ||= []).push(cls);
+  }
+  for (const t of d.exposed) {
+    if (t.model_kinds) t.model_kinds = [...new Set(t.model_kinds)];
+  }
+  d.modelUsed = true;
 }
 
 function fail(msg){
@@ -414,7 +549,23 @@ function render(d){
         }
         h += `</div>`;
       }
-      if (t.columns && t.columns.length) {
+      if (t.model_kinds && t.model_kinds.length) {
+        h += `<div class="samples" style="padding-top:0">`;
+        for (const k of t.model_kinds) {
+          h += `<div class="sample"><span class="k">${esc(label(k))}</span>
+            <span class="v" style="color:var(--amber)">the model's opinion, not proof</span></div>`;
+        }
+        h += `</div>`;
+      }
+      if (t.preview && t.preview.length) {
+        h += `<div class="prev-h">One row, masked</div><div class="prev">`;
+        for (const f of t.preview) {
+          h += `<div class="r"><span class="c">${esc(f.column)}</span><span class="v">${esc(f.value)}</span></div>`;
+        }
+        const extra = (t.columns || []).length - t.preview.length;
+        h += `</div>`;
+        if (extra > 0) h += `<div class="cols">and ${extra} more ${plural(extra,"column","columns")}</div>`;
+      } else if (t.columns && t.columns.length) {
         h += `<div class="cols"><strong>Columns:</strong> ${t.columns.slice(0,14).map(esc).join(", ")}${t.columns.length>14?` and ${t.columns.length-14} more`:""}</div>`;
       }
       h += `<details class="fix"><summary>How to fix this</summary><div class="fixbody">
@@ -440,6 +591,16 @@ CREATE POLICY "own rows only" ON ${esc(t.relation)}
       </div></div>`;
   }
 
+  if (d.modelError) {
+    h += `<div class="callout amber" style="margin-bottom:22px"><strong>The model did not run.</strong>
+      ${esc(d.modelError)} Everything above comes from the built-in rules, which is
+      what you would have got by choosing them.</div>`;
+  } else if (d.modelUsed) {
+    h += `<div class="callout amber" style="margin-bottom:22px">Rows marked
+      <strong>the model's opinion</strong> were not proved by a rule. The model answers a
+      coarser question here than the command line version does, five classes instead of
+      sixteen, because the browser returns only five scores. Treat them as a lead.</div>`;
+  }
   h += `<h3 class="sec">What this did not check</h3>
     <div class="callout plain">
       This page only tests <strong>reading</strong>. It does not test whether a stranger can

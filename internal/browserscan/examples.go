@@ -1,6 +1,8 @@
 package browserscan
 
 import (
+	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -16,6 +18,11 @@ import (
 // the page, and this constant is the size of the concession.
 const maxKept = 4
 
+var (
+	reUUID      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	reTimestamp = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$`)
+)
+
 // Mask renders a value recognisable without making the report a second copy of
 // the leak.
 //
@@ -29,7 +36,22 @@ func Mask(s string) string {
 		return ""
 	}
 	if len(s) <= 4 {
+		if s == "true" || s == "false" || s == "null" {
+			return s
+		}
 		return strings.Repeat("•", len(s))
+	}
+	// Structural noise is DESCRIBED, not masked.
+	//
+	// A masked timestamp reads "•••• 0:00" and a masked UUID "•••• 768d".
+	// Both are safe and neither says anything, and on a wide table most
+	// columns look like that, so the preview fills up with nothing. Naming the
+	// shape is more useful to the reader and reveals strictly less.
+	if reUUID.MatchString(s) {
+		return "an ID"
+	}
+	if reTimestamp.MatchString(s) {
+		return "a date"
 	}
 	// Email: one character of the local part, one of the domain, the TLD.
 	if at := strings.IndexByte(s, '@'); at > 0 && strings.Contains(s[at:], ".") {
@@ -94,4 +116,76 @@ func Examples(rows []map[string]any, max int) map[string][]string {
 		}
 	}
 	return out
+}
+
+// Field is one column and a masked sample of what it held.
+type Field struct {
+	Column string `json:"column"`
+	Value  string `json:"value"`
+}
+
+// Preview returns one masked value per column, for EVERY readable table.
+//
+// Examples covers the columns a rule recognised. Most tables hold nothing a
+// structural rule can name, so a page keyed only off that would tell the
+// majority of people "readable" and nothing else, which reads as harmless.
+// One masked value per column is what turns an abstract finding into "that is
+// my customer list".
+//
+// Masked by the same function, so the ceiling on what escapes is the same
+// whether a rule recognised the column or not.
+func Preview(rows []map[string]any, maxCols int) []Field {
+	if maxCols <= 0 || len(rows) == 0 {
+		return nil
+	}
+	first := map[string]string{}
+	for _, r := range rows {
+		for c, v := range r {
+			if _, ok := first[c]; ok {
+				continue
+			}
+			if s := stringOf(v); s != "" {
+				first[c] = s
+			}
+		}
+	}
+	cols := make([]string, 0, len(first))
+	for c := range first {
+		cols = append(cols, c)
+	}
+	// Stable order, so two runs against an unchanged table preview the same
+	// columns rather than whichever the map happened to yield.
+	sort.Strings(cols)
+	if len(cols) > maxCols {
+		cols = cols[:maxCols]
+	}
+	out := make([]Field, 0, len(cols))
+	for _, c := range cols {
+		out = append(out, Field{Column: c, Value: Mask(first[c])})
+	}
+	return out
+}
+
+// stringOf renders a JSON value for preview. Numbers and booleans are shown as
+// written; objects and arrays are described rather than dumped, because a
+// nested blob pasted into a page is the leak it is reporting.
+func stringOf(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.4f", t), "0"), ".")
+	case bool:
+		if t {
+			return "true"
+		}
+		return "false"
+	case nil:
+		return ""
+	case map[string]any:
+		return fmt.Sprintf("{%d fields}", len(t))
+	case []any:
+		return fmt.Sprintf("[%d items]", len(t))
+	}
+	return ""
 }
