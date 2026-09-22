@@ -9,19 +9,67 @@ import (
 	"github.com/eppser/unruly/internal/classify"
 )
 
-// maxKept is how many characters of an original value may survive masking.
+// halfFrom is the length above which a value is masked by HALVES rather than
+// reduced to a token.
 //
-// Four. Enough that someone recognises the shape of their own data -- "that is
-// an email address, in my customers table" -- and not enough for the example
-// to BE the data. internal/classify reports kinds and never values for exactly
-// this reason; showing an example at all is a concession to the person reading
-// the page, and this constant is the size of the concession.
-const maxKept = 4
+// The first version kept at most four characters of anything. Safe, and too
+// little: a reader looking at their own table could not tell a name from a
+// product code. The operator asked for half, and this runs in their browser
+// against their own project, so the trade is theirs to make.
+//
+// Below this length halving reveals almost nothing useful anyway, so short
+// values stay heavily masked.
+const halfFrom = 8
 
 var (
 	reUUID      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	reTimestamp = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$`)
 )
+
+// MaskTight keeps at most a few characters, for values that are secret.
+//
+// Half of a bcrypt hash is half of a bcrypt hash, and half of a card number is
+// half of a PAN. The halving rule below is right for ordinary data and wrong
+// for these, so anything the classifier calls a credential or a payment
+// instrument comes through here instead.
+func MaskTight(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 4 {
+		return strings.Repeat("•", len(s))
+	}
+	if at := strings.IndexByte(s, '@'); at > 0 && strings.Contains(s[at:], ".") {
+		local, domain := s[:at], s[at+1:]
+		dot := strings.LastIndexByte(domain, '.')
+		return string(local[0]) + "•••@" + string(domain[0]) + "•••" + domain[dot:]
+	}
+	digits := 0
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			digits++
+		}
+	}
+	if digits >= 8 && digits*2 >= len(s) {
+		return "•••• " + s[len(s)-4:]
+	}
+	n := len(s) - 1
+	if n > 12 {
+		n = 12
+	}
+	return string(s[0]) + strings.Repeat("•", n)
+}
+
+// secret reports whether a value is the kind where showing half is a leak.
+func secret(column, value string) bool {
+	for _, k := range classify.Kinds([]map[string]any{{column: value}}) {
+		if k == "credential" || k == "financial" {
+			return true
+		}
+	}
+	return false
+}
 
 // Mask renders a value recognisable without making the report a second copy of
 // the leak.
@@ -35,10 +83,10 @@ func Mask(s string) string {
 	if s == "" {
 		return ""
 	}
+	if s == "true" || s == "false" || s == "null" {
+		return s
+	}
 	if len(s) <= 4 {
-		if s == "true" || s == "false" || s == "null" {
-			return s
-		}
 		return strings.Repeat("•", len(s))
 	}
 	// Structural noise is DESCRIBED, not masked.
@@ -53,28 +101,17 @@ func Mask(s string) string {
 	if reTimestamp.MatchString(s) {
 		return "a date"
 	}
-	// Email: one character of the local part, one of the domain, the TLD.
-	if at := strings.IndexByte(s, '@'); at > 0 && strings.Contains(s[at:], ".") {
-		local, domain := s[:at], s[at+1:]
-		dot := strings.LastIndexByte(domain, '.')
-		return string(local[0]) + "•••@" + string(domain[0]) + "•••" + domain[dot:]
+	// Longer than halfFrom: keep the first half, mask the rest. Enough to read
+	// your own data, and the back half is still gone.
+	r := []rune(s)
+	if len(r) > halfFrom {
+		keep := len(r) / 2
+		return string(r[:keep]) + strings.Repeat("•", len(r)-keep)
 	}
-	// Mostly digits: keep the last four, the way a receipt does.
-	digits := 0
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			digits++
-		}
-	}
-	if digits >= 8 && digits*2 >= len(s) {
-		return "•••• " + s[len(s)-4:]
-	}
-	// Everything else: one character and a length hint.
-	n := len(s) - 1
-	if n > 12 {
-		n = 12
-	}
-	return string(s[0]) + strings.Repeat("•", n)
+	// Between 5 and halfFrom characters: one character and a length hint.
+	// Halving these would leave two or three characters, which reads as noise
+	// without being meaningfully safer.
+	return string(r[0]) + strings.Repeat("•", len(r)-1)
 }
 
 // Examples returns up to max MASKED examples per data kind, taken from rows
@@ -106,7 +143,7 @@ func Examples(rows []map[string]any, max int) map[string][]string {
 				if kind == "none" || len(out[kind]) >= max {
 					continue
 				}
-				m := Mask(v)
+				m := MaskTight(v)
 				if m == "" || seen[kind+"\x00"+m] {
 					continue
 				}
@@ -161,7 +198,12 @@ func Preview(rows []map[string]any, maxCols int) []Field {
 	}
 	out := make([]Field, 0, len(cols))
 	for _, c := range cols {
-		out = append(out, Field{Column: c, Value: Mask(first[c])})
+		v := first[c]
+		if secret(c, v) {
+			out = append(out, Field{Column: c, Value: MaskTight(v)})
+			continue
+		}
+		out = append(out, Field{Column: c, Value: Mask(v)})
 	}
 	return out
 }

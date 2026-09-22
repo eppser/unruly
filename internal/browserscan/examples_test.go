@@ -7,42 +7,68 @@ import (
 	"github.com/eppser/unruly/internal/browserscan"
 )
 
-// Masking is the only thing standing between "your table holds card numbers"
-// and a second copy of the card number.
+// Two rules, because "show me more" and "do not print my password hash" are
+// both right.
 //
-// internal/classify exists on the rule that a finding names KINDS and never
-// values: "a finding that says this table contains card numbers is evidence;
-// one that quotes the number is a second copy of the leak." The browser page
-// shows examples because "contact" means nothing to the person reading it and
-// "j•••@g•••.com" means everything. That is only defensible while the example
-// cannot be read back.
-func TestAMaskedValueCannotBeReadBack(t *testing.T) {
+// The operator asked for half the string where it is longer than eight
+// characters: a reader looking at their own table could not tell a name from a
+// product code at four. That is right for ordinary data and wrong for secrets,
+// since half a bcrypt hash is half a bcrypt hash and half a card number is
+// half a PAN. So values the classifier calls credential or financial go
+// through MaskTight instead, and everything else is halved.
+func TestOrdinaryValuesAreHalvedAndSecretsAreNot(t *testing.T) {
+	// Ordinary: half survives, and the back half is gone.
+	for _, in := range []string{
+		"Hauptstrasse 14, 10115 Berlin",
+		"anna.becker@nordwind-logistik.de",
+		"Spring campaign 2026",
+	} {
+		got := browserscan.Mask(in)
+		if !strings.HasPrefix(in, strings.TrimRight(got, "•")) {
+			t.Errorf("Mask(%q) = %q does not start with the original", in, got)
+		}
+		kept := len([]rune(strings.TrimRight(got, "•")))
+		if half := len([]rune(in)) / 2; kept != half {
+			t.Errorf("Mask(%q) kept %d characters, want %d", in, kept, half)
+		}
+	}
+	// Secret: the tight rule, and nothing readable survives.
 	for _, tc := range []struct{ in, mustNotContain string }{
 		{"4111111111111111", "411111111111"},
-		{"anna.becker@nordwind-logistik.de", "anna.becker"},
+		{"$2b$12$aaaaaaaaaaaaaaaaaaaaaaBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "aaaaaaaaaaaaaa"},
 		{"DE89370400440532013000", "370400440532"},
-		{"$2b$12$EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEX", "EXAMPLEEXAMPLE"},
-		{"+49 170 1234567", "1234567"},
-		{"Hauptstrasse 14, 10115 Berlin", "Hauptstrasse"},
 	} {
-		got := browserscan.Mask(tc.in)
+		got := browserscan.MaskTight(tc.in)
 		if strings.Contains(got, tc.mustNotContain) {
-			t.Errorf("Mask(%q) = %q, which still contains %q", tc.in, got, tc.mustNotContain)
+			t.Errorf("MaskTight(%q) = %q still contains %q", tc.in, got, tc.mustNotContain)
 		}
-		// Four characters of the original is the ceiling. Enough to recognise
-		// the shape of your own data, not enough to be the data.
-		kept := 0
-		for _, r := range got {
-			if r != '•' && r != ' ' && r != '@' && r != '.' {
-				kept++
-			}
-		}
-		if kept > 8 {
-			t.Errorf("Mask(%q) = %q keeps %d original characters", tc.in, got, kept)
-		}
-		if got == tc.in {
-			t.Errorf("Mask(%q) returned the input unchanged", tc.in)
-		}
+	}
+}
+
+// And the choice is made from the VALUE, not from a caller remembering to
+// pick the right function.
+func TestAPreviewPicksTheTightRuleForSecretsItself(t *testing.T) {
+	rows := []map[string]any{{
+		"note": "Spring campaign 2026 launch plan",
+		// A REAL bcrypt hash is 60 characters: $2b$12$ plus 22 salt and 31
+		// digest. My first fixture was 58 and the classifier correctly
+		// ignored it, which is the second time today a test of mine was
+		// wrong rather than the code.
+		"password_hash": "$2b$12$aaaaaaaaaaaaaaaaaaaaaaBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+		"card":          "4111111111111111",
+	}}
+	by := map[string]string{}
+	for _, f := range browserscan.Preview(rows, 8) {
+		by[f.Column] = f.Value
+	}
+	if !strings.HasPrefix(by["note"], "Spring cam") {
+		t.Errorf("an ordinary note was over-masked: %q", by["note"])
+	}
+	if strings.Contains(by["password_hash"], "aaaaaaaaaaaaaa") {
+		t.Errorf("a password hash was halved instead of hidden: %q", by["password_hash"])
+	}
+	if strings.Contains(by["card"], "41111111") {
+		t.Errorf("a card number was halved instead of hidden: %q", by["card"])
 	}
 }
 

@@ -243,6 +243,142 @@ func get(c *http.Client, u string) (string, error) {
 	return string(b), err
 }
 
+// Backend selectors, NOT finding ids.
+//
+// These carried a provider prefix at first, and internal/eval's id coverage
+// check read them as finding ids: its pattern matches any quoted literal in
+// production source beginning supabase-, unruly-, app- or firebase-. It failed
+// because no test named them and docs/checks.md did not document them.
+//
+// The check was right to look. A literal of that shape in the scanner IS a
+// finding id everywhere else in this repository, so these are named without a
+// provider prefix and the two namespaces stay apart. The comment avoids the
+// shape too, because the extractor reads raw text rather than syntax.
+const (
+	kindRTDB       = "rtdb"
+	kindFirestore  = "firestore"
+	kindPocketBase = "pocketbase"
+	kindSupabase   = "supabase"
+)
+
+// ---- other backends -------------------------------------------------------
+//
+// All of these answer a browser. Measured from a github.io origin: Firebase
+// RTDB and Firestore echo the origin, Firebase Storage and PocketBase answer
+// "*". An earlier version of this page called them CLI-only, which was this
+// build's scope presented as a platform limit.
+//
+// Each is probed at its OWN shape. The grading is the same question
+// throughout: did an anonymous caller get rows back.
+
+// probeRTDB asks a Realtime Database path for data. RTDB answers a wide-open
+// rule with the data itself and a closed one with 401.
+func probeRTDB(c *http.Client, base, path string) (f finding, ok bool) {
+	url := strings.TrimRight(base, "/") + "/" + path + ".json?shallow=true"
+	resp, err := c.Get(url)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusOK && len(body) > 4 && string(body) != "null":
+		var rows []map[string]any
+		if json.Unmarshal(body, &rows) != nil {
+			var obj map[string]any
+			if json.Unmarshal(body, &obj) == nil {
+				rows = []map[string]any{obj}
+			}
+		}
+		f = finding{Relation: path, State: "exposed", Rows: len(rows)}
+		if len(rows) > 0 {
+			f.Kinds = classify.Kinds(rows)
+			f.Examples = browserscan.Examples(rows, 2)
+			f.Preview = browserscan.Preview(rows, 10)
+			f.Columns = columnsOf(rows)
+		}
+		return f, true
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return finding{Relation: path, State: "denied"}, true
+	}
+	return
+}
+
+// probeFirestore asks a collection for documents through the REST API.
+func probeFirestore(c *http.Client, project, apiKey, collection string) (f finding, ok bool) {
+	url := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/(default)/documents/%s?pageSize=3",
+		project, collection)
+	if apiKey != "" {
+		url += "&key=" + apiKey
+	}
+	resp, err := c.Get(url)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		return finding{Relation: collection, State: "denied"}, true
+	}
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	var doc struct {
+		Documents []struct {
+			Fields map[string]map[string]any `json:"fields"`
+		} `json:"documents"`
+	}
+	if json.Unmarshal(body, &doc) != nil || len(doc.Documents) == 0 {
+		return
+	}
+	// Firestore wraps every value in a type envelope: {"stringValue":"x"}.
+	// Unwrap so the SAME classifier sees the same shape it sees elsewhere.
+	rows := make([]map[string]any, 0, len(doc.Documents))
+	for _, d := range doc.Documents {
+		row := map[string]any{}
+		for k, typed := range d.Fields {
+			for _, v := range typed {
+				row[k] = v
+				break
+			}
+		}
+		rows = append(rows, row)
+	}
+	f = finding{Relation: collection, State: "exposed", Rows: len(rows),
+		Kinds: classify.Kinds(rows), Examples: browserscan.Examples(rows, 2),
+		Preview: browserscan.Preview(rows, 10), Columns: columnsOf(rows)}
+	return f, true
+}
+
+// probePocketBase asks a collection for records.
+func probePocketBase(c *http.Client, base, collection string) (f finding, ok bool) {
+	url := fmt.Sprintf("%s/api/collections/%s/records?perPage=3",
+		strings.TrimRight(base, "/"), collection)
+	resp, err := c.Get(url)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return finding{Relation: collection, State: "denied"}, true
+	}
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	var page struct {
+		TotalItems int              `json:"totalItems"`
+		Items      []map[string]any `json:"items"`
+	}
+	if json.Unmarshal(body, &page) != nil || len(page.Items) == 0 {
+		return
+	}
+	f = finding{Relation: collection, State: "exposed", Rows: page.TotalItems,
+		Kinds: classify.Kinds(page.Items), Examples: browserscan.Examples(page.Items, 2),
+		Preview: browserscan.Preview(page.Items, 10), Columns: columnsOf(page.Items)}
+	return f, true
+}
+
 func main() {
 	js.Global().Set("unrulyScan", js.FuncOf(scan))
 	js.Global().Set("unrulyDiscover", js.FuncOf(discoverJS))
@@ -251,11 +387,35 @@ func main() {
 	// grow a second opinion about what counts as a finding.
 	js.Global().Set("unrulyModelPrompt", js.FuncOf(modelPromptJS))
 	js.Global().Set("unrulyPick", js.FuncOf(pickJS))
+	js.Global().Set("unrulyBackends", js.FuncOf(backendsJS))
+	js.Global().Set("unrulyNormalise", js.FuncOf(normaliseJS))
 	js.Global().Set("unrulyVersion", js.ValueOf(version))
 	select {} // the Go runtime must stay alive for the exported func to work
 }
 
 var version = "dev"
+
+// normaliseJS(typed) turns what a person typed into an address, or "" when it
+// is not one. In Go so the rule is tested, rather than a regex in the page
+// that quietly disagrees with it.
+func normaliseJS(this js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return ""
+	}
+	return js.ValueOf(browserscan.NormaliseSite(args[0].String()))
+}
+
+// backendsJS(text) lists every database an application points at.
+func backendsJS(this js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return "[]"
+	}
+	b, err := json.Marshal(browserscan.DetectBackends(args[0].String()))
+	if err != nil {
+		return "[]"
+	}
+	return js.ValueOf(string(b))
+}
 
 // modelPromptJS(column, valuesCSV) returns the prompt for one column.
 func modelPromptJS(this js.Value, args []js.Value) any {
@@ -304,6 +464,13 @@ func scan(this js.Value, args []js.Value) any {
 	base := strings.TrimRight(args[0].String(), "/")
 	key := strings.TrimSpace(args[1].String())
 	onProgress, onDone := args[2], args[3]
+	kind, ref := "supabase", ""
+	if len(args) > 5 {
+		kind = args[5].String()
+	}
+	if len(args) > 6 {
+		ref = args[6].String()
+	}
 	// The bundle discovery already downloaded, so the scan can probe the names
 	// the app states outright instead of guessing. Empty when the operator
 	// entered the details by hand, which is why the pinned list still matters.
@@ -322,7 +489,7 @@ func scan(this js.Value, args []js.Value) any {
 				}))
 			}
 		}()
-		run(base, key, bundleText, onProgress, onDone)
+		runKind(kind, base, key, ref, bundleText, onProgress, onDone)
 	}()
 	return nil
 }
@@ -358,6 +525,13 @@ func discoverJS(this js.Value, args []js.Value) any {
 }
 
 func run(base, key, bundleText string, onProgress, onDone js.Value) {
+	runKind("supabase", base, key, "", bundleText, onProgress, onDone)
+}
+
+// runKind scans whichever backend was detected. The name list is shared: a
+// vibe-coded Firestore collection is named after the domain exactly as a
+// Postgres table is, and the app's own code names both.
+func runKind(kind, base, key, ref, bundleText string, onProgress, onDone js.Value) {
 	// Candidates come from internal/browserscan, which is NOT build-tagged and
 	// therefore has tests. This line previously read
 	// wordlist.RelationCandidates(nil, browserBudget), which returns an empty
@@ -399,7 +573,16 @@ func run(base, key, bundleText string, onProgress, onDone js.Value) {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				out[i] = probe(client, base, key, names[i])
+				switch kind {
+				case kindRTDB:
+					out[i].f, out[i].ok = probeRTDB(client, base, names[i])
+				case kindFirestore:
+					out[i].f, out[i].ok = probeFirestore(client, ref, key, names[i])
+				case kindPocketBase:
+					out[i].f, out[i].ok = probePocketBase(client, base, names[i])
+				default:
+					out[i] = probe(client, base, key, names[i])
+				}
 				progress <- names[i]
 			}
 		}()

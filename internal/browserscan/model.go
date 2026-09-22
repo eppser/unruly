@@ -13,8 +13,16 @@ type Class struct {
 	Description string // what the model is asked to recognise
 }
 
-// modelClasses is FIVE, and the number is set by the runtime rather than by
+// modelClasses is FOUR, and the number is set by the runtime rather than by
 // taste.
+//
+// It was five. The fifth was "sensitive": health, biometrics, religion,
+// politics, criminal record. Against a real application it fired on almost
+// every text column, filling the report with "sensitive / the model's opinion,
+// not proof" beside ordinary content. A category that broad gives the model
+// nowhere to put an uncertain answer except into it, and a class that is
+// almost always chosen carries no information. The three that remain each name
+// something specific enough to be wrong about.
 //
 // The CLI declares sixteen classes and renormalises the model's probability
 // across all of them. WebLLM enforces top_logprobs <= 5: config.ts throws a
@@ -30,7 +38,6 @@ var modelClasses = []Class{
 	{"A", "credential", "secret material: password, password hash, API key, access token, private key"},
 	{"B", "financial", "payment instrument or bank account: card number, IBAN, account number, salary"},
 	{"C", "contact", "a way to reach or name a person: full name, email address, phone number, postal address"},
-	{"D", "sensitive", "data about a person that is sensitive on its own: health, biometrics, religion, politics, sexuality, criminal record, government identifier"},
 	{"Z", "none", "ordinary application data with nothing personal or secret in it: product text, order references, prices, status values, timestamps, identifiers, logs"},
 }
 
@@ -56,8 +63,33 @@ func ModelPrompt(column string, values []string) string {
 		fmt.Fprintf(&b, "%s. %s\n", c.Slot, c.Description)
 	}
 	fmt.Fprintf(&b, "\ncolumn name: %s\nsampled values: %s\n\nAnswer:",
-		column, strings.Join(values, " | "))
+		column, strings.Join(trim(values), " | "))
 	return b.String()
+}
+
+// maxValueChars is how much of one sampled value reaches the model.
+//
+// Eighty. A browser run failed with "number of prompt tokens: 5080; context
+// window size: 4096" because values were passed through whole, and a single
+// long bio column is enough to overflow a 4k window. The classifier is
+// deciding what KIND of thing a value is, and the opening of an address says
+// that as well as the whole of it.
+const maxValueChars = 80
+
+// trim shortens each value so the prompt fits, and shortens them EVENLY so a
+// long first value cannot spend the budget a later one needed.
+func trim(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		r := []rune(v)
+		if len(r) > maxValueChars {
+			r = r[:maxValueChars]
+			out = append(out, string(r)+"…")
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // PickClass renormalises over the DECLARED slots and applies the gate.
