@@ -318,46 +318,26 @@ Detected from the app's own bundle — you don't tell it what you're running.
 
 ---
 
-## Why not just use the platform's advisor — and what it already covers
+## Why not just use the platform's advisor?
 
-**Run it. It is free, fast, CI-gateable, and it covers more than people
-assume.** Supabase's advisor is [`splinter`](https://github.com/supabase/splinter),
-and it ships around thirty lints. Several are squarely in this territory:
+**Run it.** Supabase's advisor is [`splinter`](https://github.com/supabase/splinter)
+— 29 SQL lints over `pg_catalog`, free and CI-gateable — and it covers more than
+scanner vendors admit: RLS off, RLS on with no policy, exposed `auth.users`,
+listable public buckets, callable `SECURITY DEFINER` routines. If your question
+is *"did anyone forget to switch RLS on"*, splinter answers it more cheaply
+than a scan does.
 
-| splinter lint | catches |
-|---|---|
-| `0013_rls_disabled_in_public` | a table in the API schema with RLS off |
-| `0008_rls_enabled_no_policy` | RLS on, no policy — the deny-everything case |
-| `0002_auth_users_exposed` | `auth.users` reachable through the API |
-| `0023_sensitive_columns_exposed` | a column *named* `password`, `ssn`, `api_key`… on an unprotected table |
-| `0025_public_bucket_allows_listing` | a storage bucket anyone can enumerate |
-| `0028/0029_security_definer_function_executable` | a privileged routine `anon` or `authenticated` can call |
-
-If your question is *"did anyone forget to switch RLS on"*, splinter answers
-it, and this scanner is not the cheaper way to ask.
-
-### The gap is narrow, specific, and it is where the real failures are
+The gap is narrow and specific:
 
 ```sql
 CREATE POLICY "read notes" ON notes FOR SELECT TO authenticated
   USING (auth.uid() IS NOT NULL);   -- every signed-in user reads every note
 ```
 
-That policy is clean under splinter, for two independent reasons, both
-verifiable in `0024_rls_policy_always_true`:
-
-1. **SELECT is excluded by design.** The lint checks `UPDATE`, `DELETE` and
-   `ALL`, and the file says why: *"SELECT policies with `USING (true)` are
-   intentionally excluded as this pattern is often used deliberately for public
-   read access."*
-2. **It matches literal patterns only** — `true`, `(true)`, `1=1` — after
-   lowercasing and stripping whitespace. `auth.uid() IS NOT NULL` is a function
-   call, so it is never evaluated. That exclusion applies to `UPDATE` and
-   `DELETE` too: a permissive *expression* escapes the lint even on the
-   commands it does check.
-
-Where signup is open, "every signed-in user" is anyone with an email address.
-unruly signs in as two separate people and compares what each receives:
+RLS is on, a policy exists, and `0024_rls_policy_always_true` does not fire —
+it skips SELECT by design, and it matches only the literal strings `true` and
+`1=1`, never an expression. unruly signs in as two separate accounts and
+compares what each receives:
 
 ```
 [supabase-authenticated-escalation] [postgrest] [high] .../rest/v1/notes [2 rows]
@@ -365,33 +345,16 @@ unruly signs in as two separate people and compares what each receives:
   The policy grants access to the ROLE rather than to the owning user.
 ```
 
-`0027_pg_graphql_authenticated_table_exposed` is the nearest thing splinter has,
-and it answers a different question: it reports that a table's *name and
-columns* are visible through GraphQL introspection, it requires `pg_graphql` to
-be enabled, and it fires whenever `authenticated` holds SELECT — which a
-**correctly scoped** policy also grants. It cannot separate a good policy from
-that one.
+Three more differences: splinter classifies by **column name** (67 fixed
+patterns, no rows read, and only on tables with RLS *off*) where unruly
+classifies by **value**; an advisor runs as the **project owner**, so never
+against an app you are assessing or acquiring; and a catalog lint reasons about
+what *should* happen, where a request observes what **does**.
 
-### Three more differences, stated plainly
+**Use both.** Every claim above is read out of the lint SQL and shown line by
+line — with the splinter commit it was checked against — in
+[docs/splinter-coverage.md](docs/splinter-coverage.md).
 
-**Classification by value, not by column name.** `0023` matches names against a
-fixed list — `password`, `ssn`, `api_key` — and reads no rows, by design. It
-cannot see a card number in a column called `notes`, a JSONB field holding
-`{"card": "4111…"}`, or anything in a schema that is not in English. unruly
-classifies what actually came back: Luhn plus an issuer length, IBAN mod-97, a
-JWT header that decodes.
-
-**An advisor runs as the project owner.** It can never be pointed at an app you
-are assessing, acquiring or triaging. unruly needs a URL.
-
-**Configuration is not behaviour.** An advisor reads `pg_catalog` and reasons
-about what *should* happen. Neon's console — which does exactly that — warns
-that a table with RLS disabled lets all authenticated users read every row, and
-for a table holding no GRANT that is false, because no role can reach it at
-all. Asking the API what it *does* inherits none of that.
-
-**Use both.** They answer different questions, and the overlap is smaller than
-either project's marketing suggests.
 ---
 
 
@@ -553,7 +516,7 @@ anyone can repeat.
 
 | | What it does | Where it stops |
 |---|---|---|
-| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | [The SELECT exclusion above](#why-not-just-use-the-platforms-advisor--and-what-it-already-covers), and they run as the owner — so never against an app you're assessing, acquiring or triaging |
+| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | [The SELECT exclusion above](#why-not-just-use-the-platforms-advisor), and they run as the owner — so never against an app you're assessing, acquiring or triaging |
 | **nuclei** | Huge template library, great at fingerprinting | Three Supabase templates, **none** test row-level security; the one that finds an anon key extracts it and stops. One real Firebase permission test, write-only and off by default. **Zero** for Firestore, PostgREST or Neon |
 | **Cloud posture tools**<br/>Prowler, ScoutSuite, Wiz | Excellent at AWS/GCP/Azure misconfiguration | Structurally cannot cover this: a Supabase customer has no cloud account to connect and no IAM role to assume |
 | **Secret scanners**<br/>TruffleHog, gitleaks | Find keys in code and history | Tell you a key exists, not what it reaches. A public anon key is *supposed* to ship — the question is what's behind it |
@@ -570,9 +533,9 @@ what you need to prove it.
 - **Not a code reviewer.** It reads a running system. For "is this migration
   correct before I apply it", use `supabase db advisors` or a static linter.
 - **Not a replacement for your platform's advisor.** Run both. splinter ships
-  around thirty lints and catches RLS-off, exposed `auth.users`, public buckets
+  29 lints and catches RLS-off, exposed `auth.users`, public buckets
   and callable privileged routines more cheaply than a scan does. The overlap
-  is real; the gap is [narrow and specific](#why-not-just-use-the-platforms-advisor--and-what-it-already-covers).
+  is real; the gap is [narrow and specific](#why-not-just-use-the-platforms-advisor).
 - **Not for targets you don't own or aren't authorised to test.** It sends real
   requests.
 - **Not a pentest.** One class of failure: what an anonymous or freshly
