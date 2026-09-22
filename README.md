@@ -354,6 +354,32 @@ yourself. We hit it often enough on a large estate that it never produced a
 report. Your mileage may differ, and the fix is small if anyone wants to send
 it.
 
+#### What that looked like on a 1,000 target estate
+
+Our own measurement, run `2026-08-25`, `unruly 0.1.0-dev` against
+`supabomb 0.1.0`, each target handed to both tools in the same run.
+
+| supabomb outcome | targets | unruly proved exposure there | rows |
+|---|---:|---:|---:|
+| reported "No Supabase instance found" | 404 | 22 | 424,764 |
+| found credentials, then aborted on a `401` | 310 | 199 | 9,380,583 |
+| crashed, `AttributeError` | 286 | 85 | 342,448 |
+| **produced a report** | **0** | | |
+| total | 1,000 | 306 | 10,147,795 |
+
+On **284** of those targets supabomb had already recovered the project's own
+reference and anon key, and there was exposure unruly went on to prove. The 22
+in the first row are all hosted `*.supabase.co` projects, so they are discovery
+misses rather than a scope difference.
+
+**Read this with its limits.** It does not show that unruly grades Supabase
+better than supabomb, because supabomb never produced a grade to compare
+against. The corpus is a thousand live third-party projects, so it is not in
+this repository and you cannot re-run it from here. Every other number in this
+README comes with the evidence to check it; this one does not, and it is here
+because the crash above is easier to believe with a shape around it. Treat it
+as one team's run on one estate on one day.
+
 ---
 
 
