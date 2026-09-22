@@ -332,7 +332,13 @@ const KIND = {
   education:"Education records", criminal:"Criminal records",
   personal:"Personal details",
 };
-const label = k => KIND[k] || k;
+// The MODEL's contact class covers "full name, email address, phone number,
+// postal address". The RULES' contact covers emails and phone numbers only,
+// because that is what classify.Kinds matches. Same kind name, two different
+// spans, so the label has to follow the source. Printing "Emails or phone
+// numbers" for a model finding claimed emails in a table of names.
+const MODEL_KIND = { contact: "Names, addresses or contact details" };
+const label = (k, fromModel) => (fromModel && MODEL_KIND[k]) || KIND[k] || k;
 const plural = (n,a,b) => n === 1 ? a : b;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -618,7 +624,7 @@ function render(d){
         h += `<div class="samples">`;
         for (const k of kinds) {
           const vals = (ex[k] || []).slice(0,2);
-          h += `<div class="sample"><span class="k">${esc(label(k))}</span>
+          h += `<div class="sample"><span class="k">${esc(label(k, false))}</span>
             <span class="v">${vals.length ? vals.map(esc).join("&nbsp; &nbsp;") : "found"}</span></div>`;
         }
         h += `</div>`;
@@ -626,7 +632,7 @@ function render(d){
       if (t.model_kinds && t.model_kinds.length) {
         h += `<div class="samples" style="padding-top:0">`;
         for (const k of t.model_kinds) {
-          h += `<div class="sample"><span class="k">${esc(label(k))}</span>
+          h += `<div class="sample"><span class="k">${esc(label(k, true))}</span>
             <span class="v" style="color:var(--amber)">the model's opinion, not proof</span></div>`;
         }
         h += `</div>`;
@@ -674,7 +680,11 @@ CREATE POLICY "own rows only" ON ${esc(t.relation)}
     h += `<div class="callout amber" style="margin-bottom:22px">Rows marked
       <strong>the model's opinion</strong> were not proved by a rule. The model answers a
       coarser question here than the command line version does, four classes instead of
-      sixteen, because the browser returns only five scores. Treat them as a lead.</div>`;
+      sixteen, because the browser returns only five scores. Treat them as a lead.
+      <br><br>Measured over 24 labelled columns it answers 23 correctly, but it is least
+      confident about <strong>card and bank details</strong> and rarely clears the
+      confidence bar for them, so those are left to the rules, which prove them by
+      checksum.</div>`;
   }
   h += `<h3 class="sec">What this did not check</h3>
     <div class="callout plain">
