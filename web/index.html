@@ -180,7 +180,7 @@ pre{margin:0; padding:15px 16px; overflow-x:auto; border-radius:12px; background
 .callout.ok{background:var(--ok-bg); border-color:var(--ok-line); color:var(--ink-2)}
 .callout strong{color:var(--ink)}
 .err{background:var(--danger-bg); border:1px solid var(--danger-line); color:var(--danger);
-  border-radius:16px; padding:17px 19px; font-size:15px; margin-top:20px; line-height:1.55}
+  border-radius:14px; padding:15px 17px; font-size:14.5px; margin:0 0 18px; line-height:1.55}
 .privacy{margin:20px auto 0; max-width:48ch; text-align:center; font-size:13.5px; color:var(--ink-3); line-height:1.55}
 .privacy strong{color:var(--ink-2); font-weight:600}
 .loading{text-align:center; color:var(--ink-3); font-size:14.5px; margin-top:44px}
@@ -235,6 +235,9 @@ footer{margin-top:60px; padding-top:32px; border-top:1px solid var(--line-2); te
 
 <form id="form" hidden autocomplete="off">
   <div class="card lift">
+    <!-- Above the field, not below the page. An error about what someone typed
+         belongs where they are looking when they read it. -->
+    <div id="err" class="err" hidden></div>
     <label class="lbl" for="site">Your app's address</label>
     <div class="inputrow">
       <input type="text" id="site" placeholder="myapp.lovable.app" spellcheck="false" autocapitalize="off" autocorrect="off">
@@ -244,8 +247,8 @@ footer{margin-top:60px; padding-top:32px; border-top:1px solid var(--line-2); te
     already sends to every visitor. Nothing to look up, nothing to paste.</p>
 
     <div class="seg-wrap">
-      <p class="seg-title">How should it name the data it finds?</p>
-      <p class="seg-sub">Both run on your device.</p>
+      <p class="seg-title">Data classification</p>
+      <p class="seg-sub">Naming what kind of data a readable table holds. Both run on your device.</p>
       <div class="seg">
         <input type="radio" name="cls" id="c1" value="rules" checked>
         <label for="c1">
@@ -254,14 +257,14 @@ footer{margin-top:60px; padding-top:32px; border-top:1px solid var(--line-2); te
           structure, in any language. <strong>Limited:</strong> cannot see addresses or
           diagnoses, which have no structure to check.</span>
         </label>
-        <input type="radio" name="cls" id="c2" value="model" disabled>
+        <input type="radio" name="cls" id="c2" value="model">
         <label for="c2">
-          <span class="t">Language model <span class="pill">off</span></span>
-          <span class="d">Would also catch names and addresses, which have no structure to
-          check. <strong>Turned off after testing it:</strong> the browser runtime returns no
-          real confidence scores, so the safety gate cannot work, and on a live site it
-          reported "passwords or keys" on 10 of 13 tables including one holding article
-          slugs. The command line version has a working readout.</span>
+          <span class="t">Use Qwen 4B <span class="pill">2.3GB</span></span>
+          <span class="d"><strong>2.3GB download, might take time.</strong> Runs on your
+          graphics card afterwards and stays cached. Catches names, addresses and phone
+          numbers, which have no structure for a rule to check. Measured over 22 labelled
+          columns: 20 right, and nothing reported below 80% confidence. Smaller models were
+          tried and were not good enough to ship.</span>
         </label>
       </div>
     </div>
@@ -300,7 +303,6 @@ footer{margin-top:60px; padding-top:32px; border-top:1px solid var(--line-2); te
   </div>
 </div>
 
-<div id="err" class="err" hidden></div>
 <div id="results" hidden></div>
 
 <footer>
@@ -444,7 +446,15 @@ $("#goManual").addEventListener("click", () => {
 // unrulyPick() are the same tested code the CLI's readout uses, so this page
 // cannot grow its own opinion about what counts as a finding.
 const GATE = 0.80;
-const MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+// Qwen3.5-4B, the same family the CLI uses. Measured in Chrome over 22
+// labelled columns: credential 3/3, financial 2/3, contact 5/5, ordinary
+// 10/11, and at the 0.80 gate 8 reported with ZERO false positives.
+//
+// Smaller models were tried first and cannot do this. 0.5B and 1B both
+// collapse onto one slot and answer "credential" to almost everything: 1B
+// scored 0/5 on contact, which is the whole reason the model exists, since
+// names and addresses have no structure for a rule to check.
+const MODEL_ID = "Qwen3.5-4B-q4f16_1-MLC";
 let engine = null;
 
 async function ensureModel(onProgress){
@@ -468,7 +478,20 @@ async function ensureModel(onProgress){
 async function classifyOne(eng, column, values){
   const prompt = unrulyModelPrompt(column, (values || []).join(" | "));
   const out = await eng.completions.create({
-    prompt, max_tokens: 1, temperature: 0, logprobs: true, top_logprobs: 5,
+    prompt, max_tokens: 1, logprobs: true, top_logprobs: 5,
+    // temperature 1, NOT 0, and this is the whole reason the first attempt
+    // shipped nonsense. WebLLM builds its logprobs from probabilities AFTER
+    // the sampling transforms, so at temperature 0 the softmax is one-hot by
+    // definition: the argmax returns 1.000, every other slot is exactly
+    // 0.000, and getTopProbs fills the remainder by scan order with the
+    // lowest token ids. That produced "! \" # $" at zero and a gate that
+    // could never reject anything.
+    //
+    // The sampled token is discarded here -- the readout takes the argmax
+    // over the declared slots itself -- so temperature only affects what
+    // WebLLM samples, never what this reads. Softmax at 1 is a pure function
+    // of the logits, so two runs on one column still agree.
+    temperature: 1.0,
   });
   const lp = out?.choices?.[0]?.logprobs?.content?.[0]?.top_logprobs
           || out?.choices?.[0]?.logprobs?.top_logprobs;
