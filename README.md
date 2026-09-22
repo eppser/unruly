@@ -354,12 +354,18 @@ knows about itself.
 
 ## Coding agents secure what the prompt names
 
+**What was measured: did the agent switch row-level security on at all?**
+
+Not whether each policy was correct. Not whether one user can read another's
+rows. One binary question — is there any access control — asked of the
+*running* database rather than of the SQL the agent wrote.
+
+Hold on to that, because it decides how to read every number below.
+
 **Claude Code, Codex, Cursor, Kimi, GLM-5.3 and DeepSeek** were each asked for
 the same five tables: user profiles, feedback, comments, API tokens and an
-audit log. Nothing exotic, and nothing that hints at security.
-
-Every result was then deployed and scanned, so the verdict comes from what the
-running database handed out — not from reading the SQL they wrote.
+audit log. Nothing exotic, and nothing that hints at security. Every result was
+deployed and scanned.
 
 | The prompt | Agents that left row-level security **off entirely** |
 |---|---|
@@ -367,10 +373,10 @@ running database handed out — not from reading the SQL they wrote.
 | …plus *"make it secure"* | **0 of 5** |
 | just the tables — nothing about who calls them | **4 of 6** |
 
-Remove that one clause and **Codex, Cursor, Kimi and DeepSeek** produced
-databases with **no access control at all**. Every table was readable *and*
-writable by anyone on the internet holding the public key — which is everyone
-who opens the site:
+Remove that one clause about who calls the API and **Codex, Cursor, Kimi and
+DeepSeek** produced databases with **no access control at all** — every table
+readable *and* writable by anyone holding the public key, which is everyone who
+opens the site:
 
 | Table the task asked for | What anyone could do |
 |---|---|
@@ -380,32 +386,47 @@ who opens the site:
 | `feedback_comments` | read, and write |
 | `audit_log` — the record of who did what | read, and **rewrite** |
 
-Not "a policy was slightly too permissive". No policies existed. The last row is
-worth a second look: an audit log a stranger can edit is not an audit log.
+Not "a policy was slightly too permissive". No policies existed. An audit log a
+stranger can edit is not an audit log.
 
 **Claude Code and GLM-5.3** kept row-level security on — GLM-5.3 across all
-three prompts, Claude Code in the uncued one.
+three prompts, Claude Code in the uncued one. Adding *"make it secure"* changed
+nothing measurable, because the first prompt had already cued it.
 
-Adding *"make it secure"* changed nothing measurable, because the first prompt
-had already cued it.
+### So a zero means the door has a lock, not that the lock is fitted
 
-> **A zero here does not mean "secure".** It means RLS was switched on. Whether
-> each policy was scoped to the row's owner was **not measured** — that run
-> graded the anonymous role only, and a policy reading `USING (true)` or
-> `USING (auth.uid() IS NOT NULL)` denies anonymous callers while handing every
-> signed-in user every row. That is the most common real failure and these
-> cells are blind to it.
->
-> It is not hypothetical. Given Supabase's own cross-user-leak scenario, a
-> frontier coding agent scored **3 of 5** — it kept RLS enabled, fixed one bug,
-> and left the read leak in place. RLS on is where the subtle failures live,
-> not where they end.
+Whether each policy was scoped to the row's owner was **not measured**. That run
+graded the anonymous role only — and a policy reading `USING (true)` or
+`USING (auth.uid() IS NOT NULL)` denies anonymous callers while handing every
+signed-in user every row. Where signup is open, "every signed-in user" is
+anyone.
+
+That is the most common real failure, and those cells are blind to it. It is
+also not hypothetical: given Supabase's own cross-user-leak scenario, a frontier
+coding agent scored **3 of 5** — it kept RLS enabled, fixed one bug, and left
+the read leak in place.
+
+**RLS on is where the subtle failures live, not where they end.**
+
+### Why this is the argument for testing the deployed system
+
+Three things follow, and each maps to something this scanner does:
+
+| What the study shows | Why reading the code cannot settle it |
+|---|---|
+| The outcome flips on **one clause of the prompt** | You cannot tell from a repository which prompt produced it. The artifact looks the same either way. |
+| The crude failure is **total, not partial** | No policies at all is invisible in review precisely because there is nothing to review. The absence leaves no diff to read. |
+| The subtle failure **passes review** | `USING (auth.uid() IS NOT NULL)` reads like authentication. Supabase's own linter is [documented not to flag it for SELECT](#why-not-just-use-the-platforms-advisor). |
+
+The only thing that separates a correct policy from that one is asking the
+running system, twice, as two different people — which is what
+`supabase-authenticated-escalation` does, and why it exists.
 
 > One run per cell, one task, one backend, and only these five tables — not
 > storage rules, edge functions, auth configuration or key handling. Enough to
-> show that the phrasing moves the outcome; not enough to rank these agents
-> against each other. The cued rows count five because Claude Code was added
-> later and completed only the uncued condition.
+> show that phrasing moves the outcome; not enough to rank these agents against
+> each other. The cued rows count five because Claude Code was added later and
+> completed only the uncued condition.
 
 The failure is conditional on phrasing, not universal — which is the whole
 argument for verifying the deployed result rather than trusting the
