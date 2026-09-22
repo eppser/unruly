@@ -181,3 +181,30 @@ func TestStructuralNoiseIsDescribedRatherThanMasked(t *testing.T) {
 		t.Errorf("a real value was described instead of masked: %q", got)
 	}
 }
+
+// The rules win per COLUMN, and the browser needs to know which.
+//
+// The page had the relation's kinds and the relation's column names, and
+// compared one against the other: `new Set(t.kinds).has(columnName)`. Kind
+// names and column names never match, so every column went to the model and
+// it re-reported what a rule had already proved. On a live site that printed
+// "Emails or phone numbers" twice for one table, once as evidence with masked
+// examples and once as "the model's opinion" -- a report arguing with itself.
+func TestRuleClassesAreKnownPerColumn(t *testing.T) {
+	rows := []map[string]any{{
+		"email": "anna.becker@nordwind-logistik.de",
+		"card":  "4111111111111111",
+		"note":  "Spring campaign",
+	}}
+	got := browserscan.RuleColumns(rows)
+	if len(got["email"]) == 0 {
+		t.Error("email has no rule class, so the model would be asked about it anyway")
+	}
+	if len(got["card"]) == 0 {
+		t.Error("card has no rule class")
+	}
+	if _, ok := got["note"]; ok {
+		t.Error("note is unclassified by the rules and must NOT appear: that is exactly " +
+			"the column the model exists to look at")
+	}
+}

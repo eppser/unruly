@@ -539,11 +539,17 @@ function startScan(base, key, bundleText, note, kind, ref){
 async function runModel(d){
   $("#note").hidden = false;
   const eng = await ensureModel(t => { $("#count").textContent = t; });
+  // The rules win, per column and per class. A column a rule read is never
+  // sent: the rules measure 0.4% false positives and the model far more, so
+  // asking for a second opinion on a proof trades the trustworthy number for
+  // the other one. This used to compare kind names against column names,
+  // which never match, so every column went to the model and it re-reported
+  // what the rules had proved.
   const todo = [];
   for (const t of d.exposed) {
-    const already = new Set(t.kinds || []);
+    const ruled = t.rule_columns || {};
     for (const c of (t.columns || [])) {
-      if (!already.size || !already.has(c)) todo.push([t, c]);
+      if (!ruled[c]) todo.push([t, c]);
     }
   }
   let done = 0;
@@ -554,7 +560,13 @@ async function runModel(d){
     if (cls) (t.model_kinds ||= []).push(cls);
   }
   for (const t of d.exposed) {
-    if (t.model_kinds) t.model_kinds = [...new Set(t.model_kinds)];
+    if (!t.model_kinds) continue;
+    // And drop anything the rules already established on this relation. A
+    // report that states one fact twice, once as evidence and once as a
+    // guess, argues with itself.
+    const proved = new Set(t.kinds || []);
+    t.model_kinds = [...new Set(t.model_kinds)].filter(k => !proved.has(k));
+    if (!t.model_kinds.length) delete t.model_kinds;
   }
   d.modelUsed = true;
 }
@@ -593,6 +605,15 @@ function render(d){
           <span class="nm">${esc(t.relation)}</span>
           <span class="ct">${t.rows > 0 ? t.rows.toLocaleString() + " " + plural(t.rows,"row","rows") : "readable"}</span>
         </div>`;
+      // Say something for EVERY table. A blank where a data class should be
+      // reads as "the classifier did not run", not as "nothing sensitive
+      // here", and those are very different facts about your database.
+      if (!kinds.length && !(t.model_kinds || []).length) {
+        h += `<div class="samples"><div class="sample">
+          <span class="k" style="color:var(--ok)">Nothing sensitive found</span>
+          <span class="v" style="color:var(--ink-3)">no cards, keys, contact details or personal data recognised${d.modelUsed ? ", by the rules or the model" : " by the rules"}</span>
+        </div></div>`;
+      }
       if (kinds.length) {
         h += `<div class="samples">`;
         for (const k of kinds) {

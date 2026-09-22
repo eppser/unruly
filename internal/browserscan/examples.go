@@ -231,3 +231,48 @@ func stringOf(v any) string {
 	}
 	return ""
 }
+
+// RuleColumns maps each column the RULES classified to what they found.
+//
+// The precedence this serves is the whole safety argument for the model. A
+// column the rules read is never sent: they measure 0.4% false positives and
+// the model far more, so putting a proof up for a second opinion trades the
+// number that is trustworthy for the one that is not. And a class the rules
+// already established is not repeated as an opinion, because a report that
+// states one fact twice, once as evidence and once as a guess, argues with
+// itself.
+//
+// Columns the rules could not read are absent rather than empty, which is how
+// the caller tells "nothing here" from "not looked at".
+func RuleColumns(rows []map[string]any) map[string][]string {
+	out := map[string][]string{}
+	for _, row := range rows {
+		for c, v := range row {
+			s, ok := v.(string)
+			if !ok || s == "" {
+				continue
+			}
+			for _, k := range classify.Kinds([]map[string]any{{c: s}}) {
+				if k == "none" {
+					continue
+				}
+				if !contains(out[c], k) {
+					out[c] = append(out[c], k)
+				}
+			}
+		}
+	}
+	for c := range out {
+		sort.Strings(out[c])
+	}
+	return out
+}
+
+func contains(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

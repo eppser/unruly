@@ -101,6 +101,11 @@ type finding struct {
 	// than only the ones a rule recognised. Most tables hold nothing
 	// structural, and "readable" on its own reads as harmless.
 	Preview []browserscan.Field `json:"preview,omitempty"`
+	// RuleColumns is what the RULES read, per column. The page uses it to
+	// decide which columns the model may be asked about, and which classes it
+	// must not repeat. Without it the page compared kind names against column
+	// names, which never match, so the model re-reported proofs as opinions.
+	RuleColumns map[string][]string `json:"rule_columns,omitempty"`
 }
 
 // valuesOf collects the sampled values per column, for the model to read.
@@ -655,6 +660,7 @@ func probe(c *http.Client, base, key, name string) (r struct {
 			f.Columns = columnsOf(sample)
 			f.SampleValues = valuesOf(sample)
 			f.Preview = browserscan.Preview(sample, 10)
+			f.RuleColumns = browserscan.RuleColumns(sample)
 		}
 	case postgrest.ReadEmpty:
 		f.State = "empty"
