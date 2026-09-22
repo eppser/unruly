@@ -325,39 +325,34 @@ the splinter commit it was checked against.
 
 ### Side by side with the advisor and with supabomb
 
-[supabomb](https://github.com/ModernPentest/supabomb) is the closest open
-source tool in this space. It is a pentesting CLI for Supabase, and it does
-several things unruly does not: it registers an account, it checks which Edge
-Functions require a JWT, and it downloads tables so you have the data in hand.
-
 | | unruly | supabomb | Supabase advisor (splinter) |
 |---|---|---|---|
 | what you need to run it | a URL | a URL | owner access to the project |
 | can point it at someone else's app | yes | yes | no |
 | backends | Supabase, Firebase, Neon, PocketBase, plus 6 app-layer checks | hosted `*.supabase.co` only | Supabase only |
 | how it decides | sends requests, keeps a few rows as proof | sends requests, downloads whole tables | reads `pg_catalog` |
+| requests in flight | **64**, under one shared rate limit and request budget | one at a time, no concurrency and no rate limit | one SQL query |
 | writes to the target by default | none | registers an account, dumps tables | none |
-| says what KIND of data leaked | yes, from the values | no | by column name only, 67 patterns, and only on tables with RLS off |
-| catches `USING (auth.uid() IS NOT NULL)` | yes, signs in as two accounts and compares | not reported | no, `0024` skips SELECT by design |
-| says what it could NOT assess | yes, exit `3` | no | n/a |
+| says what KIND of data leaked | **yes, from the values** | no | by column name only, 67 patterns, and only on tables with RLS off |
+| optional local model for what rules cannot read | yes, gated and marked as opinion | no | no |
+| prove exposure without retrieving a row | **yes**, `-measure` | no | reads no rows at all |
+| keep the verdict, drop the data | **yes**, `-redact` | no | n/a |
+| replayable command per finding | **yes**, the exact `curl` | no | a remediation link |
+| catches `USING (auth.uid() IS NOT NULL)` | **yes**, signs in as two accounts and compares | not reported | no, `0024` skips SELECT by design |
+| says what it could NOT assess | **yes**, exit `3` | no | n/a |
 | agent output | versioned JSON envelope, published schema, stable fingerprints | JSON | JSON from the platform API |
 | deterministic between runs | byte-identical | not claimed | yes |
+| adding a backend | one file behind a small interface | Supabase only | Supabase only |
 | last upstream commit | this repository | 2025-11-02 | actively maintained |
 
-Two things worth knowing before you pick one.
-
-**supabomb's `all` workflow crashes when discovery succeeds without
-credentials.** `discovery_result.found` and `discovery_result.credentials` are
-treated as the same condition, so `cache.add_discovery(None, ...)` raises
-`AttributeError: 'NoneType' object has no attribute 'project_ref'` at
-`cli.py:735`. Read the two files and see for yourself. We hit it on a large
-estate often enough that it never produced a report; your mileage may differ,
-and the fix is small if anyone wants to send it.
-
-**The advisor is the cheapest thing that works.** Run it. It catches more than
-this table can show, and the gap unruly fills is the narrow one described
-above. These three tools answer different questions, and the only bad choice is
-assuming one of them answered all three.
+One thing worth knowing before you pick one. **supabomb's `all` workflow
+crashes when discovery succeeds without credentials.** `discovery_result.found`
+and `discovery_result.credentials` are treated as the same condition, so
+`cache.add_discovery(None, ...)` raises `AttributeError: 'NoneType' object has
+no attribute 'project_ref'` at `cli.py:735`. Read the two files and see for
+yourself. We hit it often enough on a large estate that it never produced a
+report. Your mileage may differ, and the fix is small if anyone wants to send
+it.
 
 ---
 
