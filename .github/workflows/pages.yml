@@ -1,0 +1,69 @@
+# Builds the browser scanner and publishes it to GitHub Pages.
+#
+# The .wasm is NEVER committed. It is 11MB, and this repository's .gitignore
+# opens with the story of a 16MB build that was swept in by a non-explicit add
+# and shipped in every clone afterwards. Built here, published from here.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'cmd/unruly-wasm/**'
+      - 'internal/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # git describe needs tags for the build stamp
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build the WebAssembly scanner
+        run: |
+          VERSION=$(git describe --tags --always)
+          GOOS=js GOARCH=wasm go build \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o web/unruly.wasm ./cmd/unruly-wasm
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" web/wasm_exec.js
+          ls -lh web/
+
+      - name: Check the page loads what it references
+        run: |
+          # A missing file here is a blank page for every visitor, and Pages
+          # will happily publish it. Fail the build instead.
+          for f in index.html wasm_exec.js unruly.wasm; do
+            test -s "web/$f" || { echo "web/$f missing or empty"; exit 1; }
+          done
+          grep -q 'unruly.wasm' web/index.html || { echo "index.html does not load the wasm"; exit 1; }
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

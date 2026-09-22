@@ -95,3 +95,6 @@ experiments/rls-agents/runs/
 # thing it exists to hide. A single opaque prefix discloses nothing and is the
 # only rule a reviewer has to check.
 /private/
+
+# Built by .github/workflows/pages.yml, never committed. See the note there.
+/web/unruly.wasm
