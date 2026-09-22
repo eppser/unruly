@@ -86,7 +86,7 @@ Path ② is also the default for almost everything being vibe-coded right now.
 Lovable, Bolt and v0 wire a new project straight to one of these backends,
 so the generated app ships with a public key and a set of policies nobody
 read. The security boundary is a few lines of SQL an agent wrote in passing —
-[and agents write them only when asked to](#coding-agents-secure-what-the-prompt-names).
+and an agent writes them from whatever the prompt implied.
 
 So authorization moved out of code you review and into policies on each table.
 Miss one, or write one that is a little too permissive, and that table is a
@@ -279,8 +279,9 @@ unruly -u https://staging.app.com \
 
 **🧑‍🤝‍🧑 You have a multi-tenant app**
 
-The leak no advisor reports: a policy scoped to the *role* instead of the
-*owner*. Needs two accounts to see.
+A policy scoped to the *role* instead of the *owner*. splinter's
+`0024` excludes SELECT by design and matches literal patterns only, so
+`auth.uid() IS NOT NULL` passes it. Needs two accounts to see.
 
 ```bash
 unruly -u https://app.com \
@@ -317,26 +318,46 @@ Detected from the app's own bundle — you don't tell it what you're running.
 
 ---
 
-## Why not just use the platform's advisor?
+## Why not just use the platform's advisor — and what it already covers
 
-**Because it is documented — and regression-tested — not to flag the most
-common real leak.** Supabase's advisor is
-[`splinter`](https://github.com/supabase/splinter), and its
-`0024_rls_policy_always_true` lint ships with this comment:
+**Run it. It is free, fast, CI-gateable, and it covers more than people
+assume.** Supabase's advisor is [`splinter`](https://github.com/supabase/splinter),
+and it ships around thirty lints. Several are squarely in this territory:
 
-```sql
--- Note: SELECT with (true) is often intentional and documented,
--- so we only flag UPDATE/DELETE
-```
+| splinter lint | catches |
+|---|---|
+| `0013_rls_disabled_in_public` | a table in the API schema with RLS off |
+| `0008_rls_enabled_no_policy` | RLS on, no policy — the deny-everything case |
+| `0002_auth_users_exposed` | `auth.users` reachable through the API |
+| `0023_sensitive_columns_exposed` | a column *named* `password`, `ssn`, `api_key`… on an unprotected table |
+| `0025_public_bucket_allows_listing` | a storage bucket anyone can enumerate |
+| `0028/0029_security_definer_function_executable` | a privileged routine `anon` or `authenticated` can call |
 
-So this passes, and where signup is open "every signed-in user" is *anyone*:
+If your question is *"did anyone forget to switch RLS on"*, splinter answers
+it, and this scanner is not the cheaper way to ask.
+
+### The gap is narrow, specific, and it is where the real failures are
 
 ```sql
 CREATE POLICY "read notes" ON notes FOR SELECT TO authenticated
   USING (auth.uid() IS NOT NULL);   -- every signed-in user reads every note
 ```
 
-unruly signs in as two people and compares what each receives:
+That policy is clean under splinter, for two independent reasons, both
+verifiable in `0024_rls_policy_always_true`:
+
+1. **SELECT is excluded by design.** The lint checks `UPDATE`, `DELETE` and
+   `ALL`, and the file says why: *"SELECT policies with `USING (true)` are
+   intentionally excluded as this pattern is often used deliberately for public
+   read access."*
+2. **It matches literal patterns only** — `true`, `(true)`, `1=1` — after
+   lowercasing and stripping whitespace. `auth.uid() IS NOT NULL` is a function
+   call, so it is never evaluated. That exclusion applies to `UPDATE` and
+   `DELETE` too: a permissive *expression* escapes the lint even on the
+   commands it does check.
+
+Where signup is open, "every signed-in user" is anyone with an email address.
+unruly signs in as two separate people and compares what each receives:
 
 ```
 [supabase-authenticated-escalation] [postgrest] [high] .../rest/v1/notes [2 rows]
@@ -344,95 +365,35 @@ unruly signs in as two people and compares what each receives:
   The policy grants access to the ROLE rather than to the owning user.
 ```
 
-Neon's advisor is a fork of splinter and documents the same exclusion, so this
-is not one vendor's oversight. And no advisor can see a `service_role` key in a
-JavaScript bundle, a proxy honouring `X-Original-URL`, or an Edge Function
-reaching the database with no JWT check — none of those are facts a database
-knows about itself.
+`0027_pg_graphql_authenticated_table_exposed` is the nearest thing splinter has,
+and it answers a different question: it reports that a table's *name and
+columns* are visible through GraphQL introspection, it requires `pg_graphql` to
+be enabled, and it fires whenever `authenticated` holds SELECT — which a
+**correctly scoped** policy also grants. It cannot separate a good policy from
+that one.
 
+### Three more differences, stated plainly
+
+**Classification by value, not by column name.** `0023` matches names against a
+fixed list — `password`, `ssn`, `api_key` — and reads no rows, by design. It
+cannot see a card number in a column called `notes`, a JSONB field holding
+`{"card": "4111…"}`, or anything in a schema that is not in English. unruly
+classifies what actually came back: Luhn plus an issuer length, IBAN mod-97, a
+JWT header that decodes.
+
+**An advisor runs as the project owner.** It can never be pointed at an app you
+are assessing, acquiring or triaging. unruly needs a URL.
+
+**Configuration is not behaviour.** An advisor reads `pg_catalog` and reasons
+about what *should* happen. Neon's console — which does exactly that — warns
+that a table with RLS disabled lets all authenticated users read every row, and
+for a table holding no GRANT that is false, because no role can reach it at
+all. Asking the API what it *does* inherits none of that.
+
+**Use both.** They answer different questions, and the overlap is smaller than
+either project's marketing suggests.
 ---
 
-## Coding agents secure what the prompt names
-
-**What was measured: did the agent switch row-level security on at all?**
-
-Not whether each policy was correct. Not whether one user can read another's
-rows. One binary question — is there any access control — asked of the
-*running* database rather than of the SQL the agent wrote.
-
-Hold on to that, because it decides how to read every number below.
-
-**Claude Code, Codex, Cursor, Kimi, GLM-5.3 and DeepSeek** were each asked for
-the same five tables: user profiles, feedback, comments, API tokens and an
-audit log. Nothing exotic, and nothing that hints at security. Every result was
-deployed and scanned.
-
-| The prompt | Agents that left row-level security **off entirely** |
-|---|---|
-| mentions the public key and the browser client | **0 of 5** |
-| …plus *"make it secure"* | **0 of 5** |
-| just the tables — nothing about who calls them | **4 of 6** |
-
-Remove that one clause about who calls the API and **Codex, Cursor, Kimi and
-DeepSeek** produced databases with **no access control at all** — every table
-readable *and* writable by anyone holding the public key, which is everyone who
-opens the site:
-
-| Table the task asked for | What anyone could do |
-|---|---|
-| `api_tokens` — integration tokens and their scopes | read, and write |
-| `profiles` — names and email addresses | read, and write |
-| `feedback` — including anything marked private | read, and write |
-| `feedback_comments` | read, and write |
-| `audit_log` — the record of who did what | read, and **rewrite** |
-
-Not "a policy was slightly too permissive". No policies existed. An audit log a
-stranger can edit is not an audit log.
-
-**Claude Code and GLM-5.3** kept row-level security on — GLM-5.3 across all
-three prompts, Claude Code in the uncued one. Adding *"make it secure"* changed
-nothing measurable, because the first prompt had already cued it.
-
-### So a zero means the door has a lock, not that the lock is fitted
-
-Whether each policy was scoped to the row's owner was **not measured**. That run
-graded the anonymous role only — and a policy reading `USING (true)` or
-`USING (auth.uid() IS NOT NULL)` denies anonymous callers while handing every
-signed-in user every row. Where signup is open, "every signed-in user" is
-anyone.
-
-That is the most common real failure, and those cells are blind to it. It is
-also not hypothetical: given Supabase's own cross-user-leak scenario, a frontier
-coding agent scored **3 of 5** — it kept RLS enabled, fixed one bug, and left
-the read leak in place.
-
-**RLS on is where the subtle failures live, not where they end.**
-
-### Why this is the argument for testing the deployed system
-
-Three things follow, and each maps to something this scanner does:
-
-| What the study shows | Why reading the code cannot settle it |
-|---|---|
-| The outcome flips on **one clause of the prompt** | You cannot tell from a repository which prompt produced it. The artifact looks the same either way. |
-| The crude failure is **total, not partial** | No policies at all is invisible in review precisely because there is nothing to review. The absence leaves no diff to read. |
-| The subtle failure **passes review** | `USING (auth.uid() IS NOT NULL)` reads like authentication. Supabase's own linter is [documented not to flag it for SELECT](#why-not-just-use-the-platforms-advisor). |
-
-The only thing that separates a correct policy from that one is asking the
-running system, twice, as two different people — which is what
-`supabase-authenticated-escalation` does, and why it exists.
-
-> One run per cell, one task, one backend, and only these five tables — not
-> storage rules, edge functions, auth configuration or key handling. Enough to
-> show that phrasing moves the outcome; not enough to rank these agents against
-> each other. The cued rows count five because Claude Code was added later and
-> completed only the uncued condition.
-
-The failure is conditional on phrasing, not universal — which is the whole
-argument for verifying the deployed result rather than trusting the
-instruction.
-
----
 
 ## Accuracy, measured not asserted
 
@@ -592,7 +553,7 @@ anyone can repeat.
 
 | | What it does | Where it stops |
 |---|---|---|
-| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | [The SELECT exclusion above](#why-not-just-use-the-platforms-advisor), and they run as the owner — so never against an app you're assessing, acquiring or triaging |
+| **Platform advisors**<br/>`supabase db advisors`, Neon's | Read `pg_catalog` as the project owner. Free, fast, CI-gateable | [The SELECT exclusion above](#why-not-just-use-the-platforms-advisor--and-what-it-already-covers), and they run as the owner — so never against an app you're assessing, acquiring or triaging |
 | **nuclei** | Huge template library, great at fingerprinting | Three Supabase templates, **none** test row-level security; the one that finds an anon key extracts it and stops. One real Firebase permission test, write-only and off by default. **Zero** for Firestore, PostgREST or Neon |
 | **Cloud posture tools**<br/>Prowler, ScoutSuite, Wiz | Excellent at AWS/GCP/Azure misconfiguration | Structurally cannot cover this: a Supabase customer has no cloud account to connect and no IAM role to assume |
 | **Secret scanners**<br/>TruffleHog, gitleaks | Find keys in code and history | Tell you a key exists, not what it reaches. A public anon key is *supposed* to ship — the question is what's behind it |
@@ -608,8 +569,10 @@ what you need to prove it.
 
 - **Not a code reviewer.** It reads a running system. For "is this migration
   correct before I apply it", use `supabase db advisors` or a static linter.
-- **Not a replacement for your platform's advisor.** Run both. They overlap on
-  one check and disagree on the rest.
+- **Not a replacement for your platform's advisor.** Run both. splinter ships
+  around thirty lints and catches RLS-off, exposed `auth.users`, public buckets
+  and callable privileged routines more cheaply than a scan does. The overlap
+  is real; the gap is [narrow and specific](#why-not-just-use-the-platforms-advisor--and-what-it-already-covers).
 - **Not for targets you don't own or aren't authorised to test.** It sends real
   requests.
 - **Not a pentest.** One class of failure: what an anonymous or freshly
