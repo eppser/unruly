@@ -21,6 +21,39 @@ judge. Reproducible evidence, machine-readable for CI and coding agents.
 
 ---
 
+## Quickstart
+
+```bash
+go install github.com/eppser/unruly/cmd/unruly@latest
+
+unruly -u https://your-app.com
+```
+
+That's it. No config file, no API token, no project reference to look up — it
+finds the key in the application's own bundle.
+
+**On an engagement:**
+
+```bash
+unruly -u https://target.com -proven              # only what rows were retrieved for
+unruly -u https://target.com -redact              # the verdict without copying their data
+unruly -l scope.txt -json -o findings.jsonl       # a whole scope, machine-readable
+unruly -u https://target.com -classifier auto     # + a local model names the data classes
+```
+
+Exit `2` means high or critical. Exit `3` means something could not be assessed
+— **not a clean result**, and the report says which surface.
+
+Writes are off unless you say the target is yours: `-write -yes-i-own-this`.
+Routines and Edge Functions are never invoked without `-invoke`, because calling
+one runs it.
+
+**Driving it from an agent?** [Jump to the agent contract](#for-ai-agents) —
+versioned JSON envelope, stable finding IDs, and a documented exit-code
+contract.
+
+---
+
 ## Why these databases are different
 
 A classic stack keeps the database private. The browser talks to *your* server,
@@ -105,17 +138,6 @@ Realtime Database, Firestore and Storage.
 
 ---
 
-## Quickstart
-
-```bash
-go install github.com/eppser/unruly/cmd/unruly@latest
-
-unruly -u https://your-app.com
-```
-
-That's it. No config file, no API token, no project reference to look up.
-
----
 
 ## Features
 
@@ -592,6 +614,7 @@ git clone https://github.com/eppser/unruly && cd unruly && make build
 
 | | |
 |---|---|
+| [`docs/how-it-works.md`](docs/how-it-works.md) | **start here** — the scan explained at two levels, with diagrams |
 | [`docs/checks.md`](docs/checks.md) | every finding id, severity and remediation |
 | [`docs/architecture.md`](docs/architecture.md) | how a scan is planned and executed |
 | [`docs/providers.md`](docs/providers.md) | adding a backend |
