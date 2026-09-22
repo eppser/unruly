@@ -260,6 +260,9 @@ one is twenty times faster.
 it reuses a cache only for a byte-identical repeat — and vLLM validates its
 request body strictly, so the field would be a 400 rather than a speedup.
 
+Three ways to ask a model this question, drawn side by side with the numbers
+behind each one: [docs/classifier-approaches.md](classifier-approaches.md).
+
 The prompt ordering is a performance contract, and a test enforces it: move the
 column above the class list and the test names what was lost. SemIf, the
 reference implementation this readout is modelled on, builds its payload as
