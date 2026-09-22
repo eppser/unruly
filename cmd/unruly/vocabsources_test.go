@@ -205,8 +205,12 @@ func TestCredentialFor(t *testing.T) {
 			inList: true, wantWithheld: "aaa"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// fromEnv=false: this table is about an explicitly supplied -k.
+			// The ambient case has its own table in ambientkey_test.go,
+			// because the two now diverge and folding them together would
+			// hide which behaviour a row is pinning.
 			got := credentialFor(tc.current, tc.currentRef, tc.projectRef,
-				tc.discovered, tc.inList)
+				tc.discovered, tc.inList, false)
 			if (got.Err != nil) != tc.wantErr {
 				t.Fatalf("err=%v, wantErr=%v", got.Err, tc.wantErr)
 			}

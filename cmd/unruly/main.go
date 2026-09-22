@@ -1400,7 +1400,7 @@ func scanTarget(ctx context.Context, o *options, w finding.Writers) (int, findin
 	// target is example-app.test and its key says examplerefexampleref, so a
 	// URL-substring check drops the correct key.
 	if cr := credentialFor(o.anonKey, escalate.JWTProjectRef(o.anonKey), o.projectRef,
-		discoveredKey, o.inList); cr.Err != nil {
+		discoveredKey, o.inList, o.keyFromEnv); cr.Err != nil {
 		return 0, finding.Info, nil, cr.Err
 	} else if cr.WithheldRef != "" {
 		gologger.Warning().Msg(cr.Warn)

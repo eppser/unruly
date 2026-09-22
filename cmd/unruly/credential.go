@@ -46,11 +46,42 @@ type credential struct {
 // the first and hides the second -- and the second means scanning somebody who
 // never asked. The list case is different: that code already chose to carry
 // on, so restoring the credential it had is a fix rather than a new policy.
-func credentialFor(current, currentRef, projectRef, discovered string, inList bool) credential {
+//
+// WHY AN AMBIENT KEY DOES NOT ABORT: fromEnv says the key came from
+// SUPABASE_ANON_KEY rather than from -k, and discovery.go already states the
+// distinction -- an env var is "how anyone who works on a Supabase project has
+// their shell", not an instruction about the target in front of them. Treating
+// the two alike meant one stale export blocked every unrelated Supabase target
+// with "use that project's own anon key", blaming the operator for a
+// credential they never aimed here and naming a project nobody asked to scan.
+//
+// Reported from a real run: a site disclosed its project ref in HTML, shipped
+// no recoverable key, and the scan died on the shell's leftover. That is the
+// failure SECURITY.md calls a vulnerability in this project -- a false
+// negative, indistinguishable in the report from a target that genuinely
+// refused.
+//
+// chooseKey already covers the case where the target DOES ship its own key.
+// This covers the one where it does not: drop the ambient key and say so,
+// because a scan without a credential is a smaller answer than no scan.
+func credentialFor(current, currentRef, projectRef, discovered string, inList, fromEnv bool) credential {
 	if projectRef == "" || current == "" || currentRef == "" || currentRef == projectRef {
 		// Nothing to compare, or nothing wrong. A key that is not a JWT has no
 		// reference and is taken at face value.
 		return credential{Key: current}
+	}
+	if !inList && fromEnv {
+		// Same fallback as the list case below, so it is built in one place:
+		// two copies of "use what discovery found, and disclose what was
+		// withheld" means a mutation lands on one and the other goes
+		// unchecked, which is a decision made twice and verified in neither.
+		return withhold(currentRef, discovered, fmt.Sprintf(
+			"SUPABASE_ANON_KEY in your environment belongs to project %q, but this "+
+				"target is %q, and no credential for it was recoverable from the site. "+
+				"Ignoring the ambient key -- sending it would only collect rejections. "+
+				"The backend cannot be assessed without a key for %s: pass one with -k, "+
+				"or unset SUPABASE_ANON_KEY if it is left over from other work",
+			currentRef, projectRef, projectRef))
 	}
 	if !inList {
 		return credential{Err: fmt.Errorf(
@@ -59,13 +90,21 @@ func credentialFor(current, currentRef, projectRef, discovered string, inList bo
 				"Use that project's own anon key, or scan %s instead",
 			currentRef, projectRef, currentRef)}
 	}
+	return withhold(currentRef, discovered, fmt.Sprintf(
+		"the supplied key was issued for project %q but this target is %q; not "+
+			"sending it, using the key discovered on this target", currentRef, projectRef))
+}
+
+// withhold builds the one outcome shared by every non-aborting mismatch: send
+// whatever discovery recovered from THIS target, and disclose the credential
+// that was held back.
+//
+// discovered is "" when the target shipped none, which is a scan without a key
+// rather than no scan. That is the smaller answer, and it is still an answer.
+func withhold(withheldRef, discovered, warn string) credential {
 	return credential{
-		// The fallback. Empty when discovery found nothing, which is the old
-		// behaviour and still correct -- but no longer the only outcome.
 		Key:         discovered,
-		WithheldRef: currentRef,
-		Warn: fmt.Sprintf("the supplied key was issued for project %q but this target "+
-			"is %q; not sending it, using the key discovered on this target",
-			currentRef, projectRef),
+		WithheldRef: withheldRef,
+		Warn:        warn,
 	}
 }
