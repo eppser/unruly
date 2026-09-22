@@ -83,11 +83,8 @@ func discovery(ctx context.Context, o *options, web *client.Client, limiter *cli
 	if err := cannotStart(o.target, o.site); err != nil {
 		return out, err
 	}
-	if origin && o.anonKey != "" {
-		gologger.Info().Msgf("inspecting %s for disclosure (credentials supplied)", o.site)
-	} else {
-		gologger.Info().Msgf("discovering credentials from %s", o.site)
-	}
+	gologger.Info().Msgf("%s %s%s", verbFor(origin, o.anonKey), o.site,
+		disclosureNote(origin, o.anonKey, o.keyFromEnv))
 	var observedDetections []provider.Detection
 	d := discover.Run(ctx, discover.Options{
 		Web: web,
@@ -232,4 +229,30 @@ func dedupeDetections(ds []provider.Detection) []provider.Detection {
 		out = append(out, d)
 	}
 	return out
+}
+
+// verbFor says what this pass is doing, which depends on whether a credential
+// is already in hand.
+func verbFor(origin bool, key string) string {
+	if origin && key != "" {
+		return "inspecting"
+	}
+	return "discovering credentials from"
+}
+
+// disclosureNote says WHERE the credential came from, when there is one.
+//
+// The line used to read "(credentials supplied)" for any non-empty key, and a
+// field report showed it printed when nothing had been supplied: the key was
+// exported for other work and inherited. A reader debugging why a scan
+// recovered no credential was told the opposite of what happened.
+func disclosureNote(origin bool, key string, fromEnv bool) string {
+	switch {
+	case !origin || key == "":
+		return ""
+	case fromEnv:
+		return " for disclosure (using SUPABASE_ANON_KEY from the environment)"
+	default:
+		return " for disclosure (credentials supplied)"
+	}
 }

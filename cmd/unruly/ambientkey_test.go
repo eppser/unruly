@@ -101,3 +101,41 @@ func TestTheAmbientWarningIsActionableAndHonest(t *testing.T) {
 		t.Errorf("an ambient key must not abort: %v", got.Err)
 	}
 }
+
+// The disclosure line must not call an ambient key "supplied".
+//
+// From the field report, with nothing passed on the command line:
+//
+//	[INF] inspecting https://www.fitness-mainz.de for disclosure (credentials supplied)
+//
+// Nothing was supplied. The key was exported for other work, and a reader
+// debugging why a scan found no credential is told the opposite of what
+// happened. haveOrigin counts a non-empty key as evidence of an origin, which
+// is right for -k and wrong for an export.
+func TestTheDisclosureLineDistinguishesSuppliedFromAmbient(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fromEnv  bool
+		wantSaid string
+	}{
+		{"explicit -k", false, "credentials supplied"},
+		{"ambient export", true, "SUPABASE_ANON_KEY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := disclosureNote(true, "k", tc.fromEnv)
+			if !strings.Contains(got, tc.wantSaid) {
+				t.Errorf("note %q does not contain %q", got, tc.wantSaid)
+			}
+			if tc.fromEnv && strings.Contains(got, "supplied") {
+				t.Errorf("note %q calls an ambient export supplied; the operator passed "+
+					"nothing and is being told they did", got)
+			}
+		})
+	}
+}
+
+func TestNoKeyAtAllSaysSo(t *testing.T) {
+	if got := disclosureNote(false, "", false); strings.Contains(got, "supplied") {
+		t.Errorf("note %q claims credentials with none present", got)
+	}
+}
