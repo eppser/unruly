@@ -93,6 +93,17 @@ type Options struct {
 	Client    *http.Client
 }
 
+// MaxInFlight bounds how many requests ONE classifier has out at once, across
+// the whole scan.
+//
+// Four, matching augmentWorkers. The cap has to live on the CLASSIFIER rather
+// than on a relation: relations are probed 64-wide, so a per-relation pool of
+// four is 256 concurrent requests at a sidecar serving four -- twenty-one
+// seconds of queue at the 340ms round trip measured against Ollama, against a
+// twenty-second request timeout. Every classification in the scan would have
+// begun failing, and it would have failed as "the model was slow".
+const MaxInFlight = 4
+
 // DefaultThreshold is where the measured false-positive rate stops being worth
 // the recall. On the 22-class benchmark the best model tested tagged 12% of
 // ordinary columns ungated; the gate is what buys that back.
@@ -102,6 +113,8 @@ const DefaultThreshold = 0.80
 type Classifier struct {
 	opt    Options
 	prompt string
+	// sem bounds in-flight requests across the whole scan. See MaxInFlight.
+	sem chan struct{}
 }
 
 // New builds a classifier. An empty Endpoint is not an error: it is the off
@@ -132,7 +145,8 @@ func New(opt Options) (*Classifier, error) {
 	for _, c := range classes {
 		fmt.Fprintf(&b, "%s. %s\n", c.Slot, c.Description)
 	}
-	return &Classifier{opt: opt, prompt: b.String()}, nil
+	return &Classifier{opt: opt, prompt: b.String(),
+		sem: make(chan struct{}, MaxInFlight)}, nil
 }
 
 // Enabled reports whether a model will actually be asked.
@@ -154,7 +168,14 @@ func (c *Classifier) Enabled() bool { return c != nil && c.opt.Endpoint != "" }
 //	                         none, which is the failure this struct exists to
 //	                         notice rather than to paper over.
 //	Ollama /api/generate     logprobs[0].top_logprobs[]           list of {token, logprob}
-//	llama.cpp /completion    completion_probabilities[0].probs[]  list of {tok_str, prob}
+//	llama.cpp /completion    completion_probabilities[0].top_logprobs[]  {token, logprob}
+//	                         Older builds answer under .probs[] as {tok_str, prob},
+//	                         and with post_sampling_probs under .top_probs[]
+//	                         as {token, prob}. All three are read: a current
+//	                         llama-server answers in the FIRST shape, and a
+//	                         parser that knew only the legacy one found no
+//	                         distribution, so the gate could not be applied and
+//	                         every column was declined.
 //
 // A server that answers in none of these shapes has given us a letter with no
 // probability behind it, and the gate is the only thing making this feature
@@ -173,8 +194,19 @@ type apiResponse struct {
 			Logprob float64 `json:"logprob"`
 		} `json:"top_logprobs"`
 	} `json:"logprobs"`
-	// llama.cpp native
+	// llama.cpp native, all three of its shapes
 	CompletionProbabilities []struct {
+		// Current: log probabilities.
+		TopLogprobs []struct {
+			Token   string  `json:"token"`
+			Logprob float64 `json:"logprob"`
+		} `json:"top_logprobs"`
+		// Current, with post_sampling_probs: plain probabilities.
+		TopProbs []struct {
+			Token string  `json:"token"`
+			Prob  float64 `json:"prob"`
+		} `json:"top_probs"`
+		// Legacy.
 		Probs []struct {
 			TokStr string  `json:"tok_str"`
 			Prob   float64 `json:"prob"`
@@ -197,6 +229,12 @@ func (r apiResponse) weights() map[string]float64 {
 		}
 	}
 	if len(out) == 0 && len(r.CompletionProbabilities) > 0 {
+		for _, e := range r.CompletionProbabilities[0].TopLogprobs {
+			out[e.Token] = math.Exp(e.Logprob)
+		}
+		for _, e := range r.CompletionProbabilities[0].TopProbs {
+			out[e.Token] = e.Prob
+		}
 		for _, e := range r.CompletionProbabilities[0].Probs {
 			out[e.TokStr] = e.Prob
 		}
@@ -213,6 +251,17 @@ func (c *Classifier) Classify(ctx context.Context, column string, values []strin
 	// Enabled() is nil-receiver safe, so this covers a nil *Classifier too.
 	if !c.Enabled() {
 		return Result{}, nil
+	}
+	// Wait for a slot BEFORE building the request, so the queue is not counted
+	// against the per-request timeout. A caller that gives up while queued
+	// gets its context error and costs the server nothing.
+	if c.sem != nil {
+		select {
+		case c.sem <- struct{}{}:
+			defer func() { <-c.sem }()
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		}
 	}
 	body, err := json.Marshal(c.Request(column, values))
 	if err != nil {
@@ -288,6 +337,21 @@ func (c *Classifier) Request(column string, values []string) map[string]any {
 		return map[string]any{
 			"prompt": prompt, "n_predict": 1, "n_probs": n,
 			"temperature": 0, "stream": false,
+			// Keep the prefix between columns. Every request repeats the same
+			// ~1.4kB class block and differs only in the trailing column name
+			// and values, so a server that reuses the cached prefix re-reads
+			// only the tail: 259ms/column to 36ms on this machine, 7.2x, on a
+			// VARYING suffix.
+			//
+			// Sent here and nowhere else. Ollama has no equivalent -- it
+			// reuses a cache only for a byte-identical repeat, 394ms varied
+			// against 35ms identical -- and vLLM validates its OpenAI request
+			// body strictly, so an unknown field there is a 400 rather than a
+			// speedup.
+			//
+			// Recent llama.cpp defaults this to true. Older ones do not, and
+			// asking costs nothing.
+			"cache_prompt": true,
 		}
 	default: // OpenAI: vLLM, LM Studio, llama.cpp's compatibility endpoint
 		return map[string]any{

@@ -231,6 +231,49 @@ reasoning model emits a thinking block where the answer should be; and the
 prompt demands a bare letter, because otherwise the model starts a sentence and
 the correct answer ranks second.
 
+### A wide table is dozens of round trips, and one thing makes them cheap
+
+Every request repeats the same ~1.9 kB of class descriptions and differs only
+in the trailing column name and values. **That ordering is the whole
+optimisation.** llama.cpp is asked to keep the prefix (`cache_prompt`) and then
+re-reads only the tail.
+
+Measured on one machine, 1.9 kB prompt, requests issued N at a time:
+
+| server | 1 | 2 | 4 | 8 |
+|---|---:|---:|---:|---:|
+| Ollama (no prefix reuse) | 340 ms | 340 ms | 335 ms | 335 ms |
+| llama.cpp, `cache_prompt` off | 203 ms | 204 ms | 206 ms | 201 ms |
+| llama.cpp, `cache_prompt` on | 33 ms | 23 ms | 17 ms | 17 ms |
+
+Two things to read out of that table. **Without prefix reuse, asking in
+parallel buys nothing** — the rows are flat, because a 1.9 kB prompt saturates
+the GPU with prompt processing and concurrency cannot overlap work that is
+already compute-bound. **Caching is what makes parallelism pay**: once the
+prompt processing is gone the remainder is overhead, and overhead overlaps.
+
+End to end over sixteen columns: 31 ms per column serially against 15 ms in
+parallel on llama.cpp, against 323 ms and 318 ms on Ollama. Both are correct;
+one is twenty times faster.
+
+`cache_prompt` goes to llama.cpp and nowhere else. Ollama has no equivalent —
+it reuses a cache only for a byte-identical repeat — and vLLM validates its
+request body strictly, so the field would be a 400 rather than a speedup.
+
+The prompt ordering is a performance contract, and a test enforces it: move the
+column above the class list and the test names what was lost. SemIf, the
+reference implementation this readout is modelled on, builds its payload as
+`{evidence, criterion, options}` — the per-row evidence *first* — so its shared
+portion is a suffix and prefix reuse cannot engage. Its prefix-reusing mode
+measured 484 ms per case against 508 ms cold: a 5% gain, where the same
+mechanism with the blocks the other way round is worth an order of magnitude.
+
+The scan never has more than four classifier requests out at once, and that cap
+sits on the classifier rather than on a relation: relations are probed 64-wide,
+so four per relation would be 256 concurrent requests at a sidecar serving
+four — more queue than the request timeout allows, surfacing as "the model was
+slow".
+
 ## Accuracy, and what is not claimed
 
 Graded end to end against a corpus of sixteen projects whose answer keys were

@@ -32,10 +32,29 @@ func TestEveryDialectYieldsTheSameDistribution(t *testing.T) {
 			"top_logprobs": []any{
 				map[string]any{"token": "B", "logprob": ln(0.9)},
 				map[string]any{"token": "Z", "logprob": ln(0.1)}}}}}},
-		{"llama.cpp native", map[string]any{"completion_probabilities": []any{map[string]any{
+		{"llama.cpp native (legacy probs)", map[string]any{"completion_probabilities": []any{map[string]any{
 			"probs": []any{
 				map[string]any{"tok_str": "B", "prob": 0.9},
 				map[string]any{"tok_str": "Z", "prob": 0.1}}}}}},
+		// The shape a CURRENT llama.cpp actually answers with, captured from
+		// b-series llama-server on this machine. It renamed `probs` to
+		// `top_logprobs` and `tok_str`/`prob` to `token`/`logprob`, and the
+		// value became a log. Against that server the old parser found no
+		// distribution at all, so the gate could not be applied and the
+		// classifier refused every column -- the llama.cpp path was dead and
+		// this table did not notice, because it recorded only the old shape.
+		{"llama.cpp native (current)", map[string]any{"completion_probabilities": []any{map[string]any{
+			"token": "B", "logprob": ln(0.9),
+			"top_logprobs": []any{
+				map[string]any{"id": 33, "token": "B", "logprob": ln(0.9)},
+				map[string]any{"id": 57, "token": "Z", "logprob": ln(0.1)}}}}}},
+		// And with post_sampling_probs, where it reports plain probabilities
+		// under `top_probs` instead.
+		{"llama.cpp native (post_sampling_probs)", map[string]any{"completion_probabilities": []any{map[string]any{
+			"token": "B", "prob": 0.9,
+			"top_probs": []any{
+				map[string]any{"id": 33, "token": "B", "prob": 0.9},
+				map[string]any{"id": 57, "token": "Z", "prob": 0.1}}}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

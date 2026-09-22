@@ -172,7 +172,9 @@ off by default. The rules always win — the model is asked only about columns
 they left unclassified — and what it returns lands in a separate
 `model_classes` field, because an opinion is not a proof. Measured on 550
 columns across 22 data classes and 25 languages: **14.9% → 88.0% recall**, at
-16% false positives, 340ms per column. Nothing leaves your machine.
+16% false positives. Speed depends on the server: 323ms per column on Ollama,
+**15ms on llama.cpp**, which can cache the shared prompt prefix. Nothing leaves
+your machine.
 
 ### ⚡ Parallel by default
 64 concurrent probes per scan, tuned to PostgREST's measured saturation point,

@@ -3,6 +3,7 @@ package semantic_test
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/eppser/unruly/internal/semantic"
@@ -10,14 +11,21 @@ import (
 
 // fakeClassifier answers from a table, so the merge rules can be graded
 // without a model and without HTTP.
+//
+// Locked, because Augment asks about the columns of one relation concurrently.
+// The order of `asked` is therefore not the order of the columns -- only its
+// contents mean anything, and every assertion here is a membership test.
 type fakeClassifier struct {
 	byColumn map[string]semantic.Result
+	mu       sync.Mutex
 	asked    []string
 }
 
 func (f *fakeClassifier) Enabled() bool { return true }
 func (f *fakeClassifier) Classify(_ context.Context, col string, _ []string) (semantic.Result, error) {
+	f.mu.Lock()
 	f.asked = append(f.asked, col)
+	f.mu.Unlock()
 	return f.byColumn[col], nil
 }
 
