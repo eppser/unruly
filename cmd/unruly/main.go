@@ -211,9 +211,11 @@ func resolveClassifier(flag string, discover func() string) (endpoint, warning s
 	if ep := discover(); ep != "" {
 		return ep, ""
 	}
-	return "", "-classifier auto found no local model server on loopback; " +
-		"continuing with the deterministic rules only. Start one (ollama serve, " +
-		"or llama-server --port 8080) or pass the endpoint directly."
+	// Naming a model is the point. The message this replaced said "Start one
+	// (ollama serve, or llama-server --port 8080)", which is correct and
+	// insufficient: someone with Ollama installed and no model follows it
+	// exactly and still gets nothing.
+	return "", semantic.SetupAdvice()
 }
 
 // newFlagSet registers every flag.
@@ -410,7 +412,8 @@ func newFlagSet(o *options) *goflags.FlagSet {
 				"always win: the model is asked only about columns they left unclassified, "+
 				"and what it returns is reported separately as model-derived. Works with "+
 				"llama.cpp (/completion), Ollama (/api/generate) and anything speaking "+
-				"OpenAI /v1/completions -- the server must return logprobs"),
+				"OpenAI /v1/completions -- the server must return logprobs. "+
+				"With nothing installed yet: ollama pull "+semantic.RecommendedModel),
 		fs.StringVar(&o.classifierModel, "classifier-model", "",
 			"model name to request, for servers that host several (Ollama, vLLM)"),
 		// goflags has no float, and an integer percent is the better interface

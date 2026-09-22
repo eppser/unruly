@@ -448,6 +448,9 @@ unruly -u https://your-app.com -measure     # prove exposure without retrieving 
 unruly -l targets.txt -json -o report.jsonl # an estate, machine-readable
 
 unruly -u https://your-app.com -classifier auto   # + a local model for what rules cannot read
+unruly -u https://your-app.com -classifier auto -classifier-model qwen3.5:4b   # pick the model
+unruly -u https://your-app.com -classifier http://127.0.0.1:8080/completion    # llama.cpp directly
+unruly -u https://your-app.com -classifier auto -classifier-threshold 90       # stricter gate
 
 unruly -u https://your-app.com -principal a=<jwt> -principal b=<jwt>   # cross-identity
 unruly -u https://your-app.com -write -yes-i-own-this                  # write probes
@@ -457,6 +460,42 @@ unruly -u https://your-app.com -stats       # what was enumerated and what it co
 unruly -u https://your-app.com -emit-vocab names.txt   # harvest the schema, probe nothing
 unruly -u https://your-app.com -vocab names.txt -vocab-only  # probe only your real names
 ```
+
+### Setting up the local model
+
+The rules need nothing installed and prove what they find. They cannot read a
+street address, a person's name or a diagnosis, because those have no structure
+to check. That is what the model adds, and it runs on your machine.
+
+```bash
+ollama pull qwen3.5:4b     # 2.5GB, once
+ollama serve               # if it is not already running
+
+unruly -u https://your-app.com -classifier auto
+```
+
+**Which model.** Anything above 4B parameters. `qwen3.5:4b` is what the numbers
+above were measured with. Below 4B the failure is not a weaker classifier, it is
+a different one: a 2B tagged 499 of 500 ordinary columns as sensitive, so the
+floor is enforced rather than advised.
+
+You do not have to get this right. `-classifier auto` finds whatever is running,
+**measures it** against six probes with known answers, and refuses a model that
+fails them. A model that cannot answer those is not used, and the scan says so.
+
+**llama.cpp instead**, which is faster because it can keep the shared prompt
+prefix between columns:
+
+```bash
+llama-server -m qwen3.5-4b-q4_k_m.gguf --port 8080
+unruly -u https://your-app.com -classifier http://127.0.0.1:8080/completion
+```
+
+Measured on one machine: 323ms per column on Ollama, 15ms on llama.cpp.
+
+Anything the model finds is reported separately from what the rules prove, and
+nothing is reported below `-classifier-threshold` (default 80). An opinion is
+not evidence, and the report keeps them apart.
 
 Findings carry their data classes, so you can triage on what leaked rather than
 on how many rows did:
