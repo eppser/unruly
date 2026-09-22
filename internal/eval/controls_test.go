@@ -1092,9 +1092,17 @@ func TestReadmeCountsMatchReality(t *testing.T) {
 	// said 884. A containment check over a whole document is satisfied by any
 	// mention, so it graded nothing -- the same "passes for the wrong reason"
 	// shape this file exists to catch.
+	//
+	// Matched across ANY whitespace, not across an optional single newline.
+	// `\s*\n?` still assumed the wrap fell in one particular gap, so
+	// reflowing the paragraph failed this check while the claim it grades was
+	// untouched -- and the natural repair is to edit the pattern, which is one
+	// step from editing it until it passes. The same fix was already made to
+	// TestTheReadmeQuotesTheBenchmarkItCites for the same reason; this was its
+	// sibling, left behind.
 	for _, probe := range []struct{ what, path, pattern string }{
-		{"README", "README.md", `scan asks about (\d+)\s*\n?conventional names`},
-		{"README", "README.md", `you stop paying\s*\n?for (\d+) guesses`},
+		{"README", "README.md", `scan\s+asks\s+about\s+(\d+)\s+conventional\s+names`},
+		{"README", "README.md", `you\s+stop\s+paying\s+for\s+(\d+)\s+guesses`},
 		{"-vocab-only help", filepath.Join("cmd", "unruly", "main.go"), `pay for (\d+) guesses`},
 	} {
 		b, err := os.ReadFile(filepath.Join("..", "..", probe.path))
@@ -1131,9 +1139,19 @@ func TestReadmeCountsMatchReality(t *testing.T) {
 	if ids == 0 {
 		t.Fatal("no ids parsed from checks.md")
 	}
-	if !strings.Contains(text, fmt.Sprintf("all %d IDs", ids)) {
-		t.Errorf("checks.md documents %d finding ids; the README's sweep claim does not "+
-			"say \"all %d IDs\"", ids, ids)
+	// Read the number IN ITS ROLE rather than testing for one exact string.
+	// strings.Contains("all 72 IDs") failed when the sentence was reworded to
+	// "all 72 finding IDs", although the claim and the count were identical.
+	// This form is strictly stronger: it still fails when the README states a
+	// number that is not the documented one, and it also fails when the claim
+	// disappears entirely.
+	sweep := regexp.MustCompile(`all\s+(\d+)\s+(?:finding\s+)?IDs`).FindStringSubmatch(text)
+	if sweep == nil {
+		t.Errorf("checks.md documents %d finding ids, and the README makes no "+
+			"\"all N IDs\" sweep claim at all, so this check grades nothing", ids)
+	} else if sweep[1] != strconv.Itoa(ids) {
+		t.Errorf("checks.md documents %d finding ids; the README's sweep claim says %s",
+			ids, sweep[1])
 	}
 
 	// The mutation count in the auditors' document, against the harness that
