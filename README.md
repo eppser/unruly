@@ -16,9 +16,15 @@ is machine readable for CI and coding agents.
 [![Precision](https://img.shields.io/badge/precision-100%25-brightgreen)](#accuracy-measured-not-asserted)
 [![Backends](https://img.shields.io/badge/backends-Supabase%20%C2%B7%20Firebase%20%C2%B7%20Neon%20%C2%B7%20PocketBase-6366f1)](#supported-backends)
 
+### [→ Try it in your browser, no install](https://eppser.github.io/unruly/)
+
+**[eppser.github.io/unruly](https://eppser.github.io/unruly/)** · paste your app's address and it
+finds your database the way a stranger would. Runs entirely on your device, nothing is uploaded.
+Reads only, Supabase only. Everything else is below.
+
 <img src="docs/media/scan.gif" alt="unruly scanning an application and returning exposed rows as proof" width="100%">
 
-[Quickstart](#quickstart) · [What it finds](#features) · [How it compares](#how-this-compares) · [Accuracy](#accuracy-measured-not-asserted) · [Agent contract](#for-ai-agents) · [Not the right tool?](#where-it-is-not-the-right-tool)
+[Try it online](https://eppser.github.io/unruly/) · [Quickstart](#quickstart) · [What it finds](#features) · [How it compares](#how-this-compares) · [Accuracy](#accuracy-measured-not-asserted) · [Agent contract](#for-ai-agents) · [Not the right tool?](#where-it-is-not-the-right-tool)
 
 </div>
 

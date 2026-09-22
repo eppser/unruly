@@ -80,6 +80,31 @@ type finding struct {
 	State    string   `json:"state"`
 	Rows     int      `json:"rows"`
 	Kinds    []string `json:"kinds"`
+	// Examples are MASKED, by internal/browserscan.Mask, and keep at most four
+	// characters of any original value. "contact" tells a reader nothing;
+	// "a•••@n•••.de" tells them it is their customer list. That is the entire
+	// reason this field exists, and the mask is the entire reason it is
+	// defensible. Keyed by kind.
+	Examples map[string][]string `json:"examples,omitempty"`
+	// Columns names only, never values, so the page can say how wide the
+	// exposure is without widening it.
+	Columns []string `json:"columns,omitempty"`
+}
+
+// columnsOf names the columns a sample came back with.
+func columnsOf(rows []map[string]any) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		for c := range r {
+			if !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // reRef matches a project reference wherever it appears, in the page or in a
@@ -374,6 +399,8 @@ func probe(c *http.Client, base, key, name string) (r struct {
 		var sample []map[string]any
 		if json.Unmarshal(body, &sample) == nil {
 			f.Kinds = classify.Kinds(sample)
+			f.Examples = browserscan.Examples(sample, 2)
+			f.Columns = columnsOf(sample)
 		}
 	case postgrest.ReadEmpty:
 		f.State = "empty"

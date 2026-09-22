@@ -3,241 +3,272 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Is your database open? · unruly</title>
-<meta name="description" content="Check whether anyone on the internet can read your Supabase tables. Runs entirely in your browser.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔓</text></svg>">
+<title>unruly · Is your database open to the internet?</title>
+<meta name="description" content="unruly checks whether a stranger can read your Supabase tables. Give it your app's address. Runs entirely in your browser.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🔓</text></svg>">
 <style>
 :root{
-  --bg:#fbfbfd; --surface:#fff; --line:rgba(0,0,0,.09);
-  --ink:#1d1d1f; --ink-2:#6e6e73; --ink-3:#86868b;
-  --accent:#0071e3; --accent-ink:#fff;
-  --danger:#d70015; --danger-bg:#fff1f0; --danger-line:rgba(215,0,21,.18);
-  --ok:#00693e; --ok-bg:#f0faf4; --ok-line:rgba(0,105,62,.18);
-  --warn:#8a6100; --warn-bg:#fffaf0;
-  --radius:18px; --maxw:680px;
-  --shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 28px rgba(0,0,0,.06);
-}
-@media (prefers-color-scheme:dark){
-  :root{
-    --bg:#000; --surface:#1c1c1e; --line:rgba(255,255,255,.12);
-    --ink:#f5f5f7; --ink-2:#a1a1a6; --ink-3:#8e8e93;
-    --accent:#0a84ff;
-    --danger:#ff453a; --danger-bg:#2a1414; --danger-line:rgba(255,69,58,.26);
-    --ok:#30d158; --ok-bg:#12241a; --ok-line:rgba(48,209,88,.24);
-    --warn:#ffd60a; --warn-bg:#241f10;
-    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 28px rgba(0,0,0,.5);
-  }
+  --bg:#fff; --bg-2:#f5f5f7; --surface:#fff; --line:#e3e3e6; --line-2:#ededf0;
+  --ink:#1d1d1f; --ink-2:#515154; --ink-3:#86868b;
+  --accent:#0071e3; --accent-dark:#0058b0;
+  --danger:#d70015; --danger-bg:#fff5f5; --danger-line:#f6d4d6;
+  --ok:#00693e; --ok-bg:#f2faf6; --ok-line:#cee7db;
+  --amber:#8a6100; --amber-bg:#fffbf2;
+  --r:20px; --maxw:700px;
+  --sh-1:0 1px 2px rgba(0,0,0,.05), 0 6px 20px rgba(0,0,0,.05);
+  --sh-2:0 2px 6px rgba(0,0,0,.06), 0 18px 46px rgba(0,0,0,.09);
 }
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%; scroll-behavior:smooth}
 body{
   margin:0; background:var(--bg); color:var(--ink);
-  font:400 17px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
+  font:400 17px/1.52 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,system-ui,sans-serif;
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-  padding:0 20px calc(64px + env(safe-area-inset-bottom,0px));
+  padding:0 20px calc(80px + env(safe-area-inset-bottom,0px));
 }
 .wrap{max-width:var(--maxw); margin:0 auto}
 [hidden]{display:none!important}
-
-header{padding:clamp(56px,12vw,104px) 0 0; text-align:center}
-h1{
-  margin:0 0 14px; font-weight:600; letter-spacing:-.024em;
-  font-size:clamp(34px,6.4vw,54px); line-height:1.06;
-}
-.sub{margin:0 auto; max-width:30ch; color:var(--ink-2); font-size:clamp(17px,2.4vw,20px); line-height:1.42}
-
-.card{
-  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
-  box-shadow:var(--shadow); padding:26px;
-}
-form{margin-top:40px}
-label{display:block; font-size:15px; font-weight:600; margin:0 0 6px}
-.hint{font-size:13.5px; color:var(--ink-3); margin:6px 0 0; line-height:1.45}
-input[type=text]{
-  width:100%; padding:13px 14px; font:inherit; font-size:16px;
-  color:var(--ink); background:var(--bg);
-  border:1px solid var(--line); border-radius:11px; transition:border-color .15s, box-shadow .15s;
-}
-input[type=text]:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
-input::placeholder{color:var(--ink-3)}
-.field + .field{margin-top:20px}
-
-button{
-  font:inherit; font-weight:600; cursor:pointer; border:0; border-radius:980px;
-  padding:14px 26px; background:var(--accent); color:var(--accent-ink);
-  transition:opacity .15s, transform .06s; width:100%; font-size:17px; margin-top:24px;
-}
-button:hover{opacity:.9}
-button:active{transform:scale(.985)}
-button:disabled{opacity:.45; cursor:default; transform:none}
-button.ghost{background:transparent; color:var(--accent); border:1px solid var(--line); margin-top:12px}
-
-.privacy{
-  margin:18px auto 0; max-width:46ch; text-align:center;
-  font-size:13.5px; color:var(--ink-3); line-height:1.5;
-}
-.privacy strong{color:var(--ink-2); font-weight:600}
-
-/* progress */
-#scanning{margin-top:40px; text-align:center}
-.bar{height:6px; border-radius:99px; background:var(--line); overflow:hidden; margin:22px 0 14px}
-.bar > i{display:block; height:100%; width:0; background:var(--accent); border-radius:99px; transition:width .25s ease-out}
-.count{font-size:14px; color:var(--ink-3); font-variant-numeric:tabular-nums}
-
-/* verdict */
-#results{margin-top:40px}
-.verdict{border-radius:var(--radius); padding:26px; text-align:center; border:1px solid}
-.verdict.bad{background:var(--danger-bg); border-color:var(--danger-line)}
-.verdict.good{background:var(--ok-bg); border-color:var(--ok-line)}
-.verdict h2{margin:0 0 8px; font-size:clamp(23px,4vw,30px); font-weight:600; letter-spacing:-.018em; line-height:1.15}
-.verdict.bad h2{color:var(--danger)}
-.verdict.good h2{color:var(--ok)}
-.verdict p{margin:0; color:var(--ink-2); font-size:16px; line-height:1.5}
-
-h3.sec{font-size:13px; font-weight:600; letter-spacing:.055em; text-transform:uppercase;
-  color:var(--ink-3); margin:38px 0 12px}
-
-.row{
-  display:flex; align-items:flex-start; gap:14px; padding:17px 18px;
-  background:var(--surface); border:1px solid var(--line); border-radius:14px; margin-bottom:10px;
-}
-.row .dot{width:9px; height:9px; border-radius:50%; margin-top:8px; flex:0 0 auto}
-.row.bad .dot{background:var(--danger)}
-.row.ok .dot{background:var(--ok)}
-.row .body{min-width:0; flex:1}
-.name{font-weight:600; font-size:16.5px; word-break:break-word}
-.meta{font-size:14px; color:var(--ink-2); margin-top:3px; line-height:1.45}
-.tags{display:flex; flex-wrap:wrap; gap:6px; margin-top:9px}
-.tag{
-  font-size:12px; font-weight:600; padding:3px 9px; border-radius:99px;
-  background:var(--danger-bg); color:var(--danger); border:1px solid var(--danger-line);
-}
-details.more{margin-top:8px}
-details.more > summary{cursor:pointer; font-size:14.5px; color:var(--accent); list-style:none}
-details.more > summary::-webkit-details-marker{display:none}
-details.more[open] > summary{margin-bottom:10px}
-
-pre{
-  margin:0; padding:15px 16px; overflow-x:auto; border-radius:12px;
-  background:var(--bg); border:1px solid var(--line);
-  font:500 13px/1.6 ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
-  color:var(--ink); -webkit-overflow-scrolling:touch;
-}
-.copy{
-  margin-top:10px; width:auto; padding:8px 15px; font-size:14px;
-  background:transparent; color:var(--accent); border:1px solid var(--line);
-}
-.fix-note{font-size:14.5px; color:var(--ink-2); margin:0 0 11px; line-height:1.5}
-
-.err{background:var(--danger-bg); border:1px solid var(--danger-line); color:var(--danger);
-  border-radius:14px; padding:16px 18px; font-size:15px; margin-top:22px; line-height:1.5}
-
-footer{margin-top:64px; text-align:center; font-size:13.5px; color:var(--ink-3); line-height:1.7}
-footer a{color:var(--ink-2)}
 a{color:var(--accent); text-decoration:none}
 a:hover{text-decoration:underline}
-details.settings, details.manual{margin-top:20px}
-details.settings > summary, details.manual > summary{
-  cursor:pointer; font-size:14.5px; color:var(--accent); list-style:none; padding:4px 0;
+
+/* ---------- hero ---------- */
+header{padding:clamp(48px,10vw,88px) 0 0; text-align:center}
+.brand{
+  display:inline-flex; align-items:center; gap:9px; margin-bottom:24px;
+  font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--ink-2);
 }
-details.settings > summary::-webkit-details-marker, details.manual > summary::-webkit-details-marker{display:none}
-details.manual{margin-top:14px}
-details.manual > summary{text-align:center; color:var(--ink-3)}
-.opt{display:flex; gap:11px; align-items:flex-start; padding:13px 0; border-top:1px solid var(--line); font-weight:400}
-.opt input{margin-top:4px; flex:0 0 auto; accent-color:var(--accent)}
-.opt strong{font-size:15.5px; font-weight:600}
-.opt em{font-style:normal; font-size:11.5px; font-weight:600; text-transform:uppercase;
-  letter-spacing:.05em; color:var(--ink-3); margin-left:7px}
-.opt small{display:block; font-size:13.5px; color:var(--ink-2); line-height:1.5; margin-top:4px}
-.opt input:disabled + span strong, .opt input:disabled + span small{opacity:.55}
-.found{font-size:14px; color:var(--ink-2); line-height:1.55}
-.found code{font-size:13px; background:var(--bg); padding:2px 6px; border-radius:6px; border:1px solid var(--line)}
-.loading{text-align:center; color:var(--ink-3); font-size:14px; margin-top:40px}
+.brand .mark{
+  width:26px; height:26px; border-radius:8px; background:var(--ink); color:#fff;
+  display:grid; place-items:center; font-size:14px; font-weight:700;
+}
+h1{
+  margin:0 0 16px; font-weight:600; letter-spacing:-.028em;
+  font-size:clamp(35px,6.6vw,58px); line-height:1.05;
+}
+h1 .grad{
+  background:linear-gradient(101deg,#0071e3,#8e5cf7 55%,#d70015);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.sub{margin:0 auto; max-width:34ch; color:var(--ink-2); font-size:clamp(17px,2.3vw,20px); line-height:1.45}
+
+/* ---------- chips ---------- */
+.chips{display:flex; flex-wrap:wrap; gap:7px; justify-content:center; margin:26px 0 0}
+.chip{
+  display:inline-flex; align-items:center; gap:6px; padding:6px 13px; border-radius:99px;
+  background:var(--bg-2); border:1px solid var(--line-2); font-size:13.5px; font-weight:500; color:var(--ink-2);
+}
+.chip .d{width:6px; height:6px; border-radius:50%; background:var(--ok)}
+.chip.off{opacity:.6}
+.chip.off .d{background:var(--ink-3)}
+
+/* ---------- card / form ---------- */
+.card{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--sh-1); padding:24px}
+.card.lift{box-shadow:var(--sh-2)}
+form{margin-top:36px}
+label.lbl{display:block; font-size:14.5px; font-weight:600; margin:0 0 7px}
+.hint{font-size:13.5px; color:var(--ink-3); margin:8px 0 0; line-height:1.45}
+.inputrow{display:flex; gap:10px}
+input[type=text]{
+  flex:1; min-width:0; padding:15px 16px; font:inherit; font-size:16.5px; color:var(--ink);
+  background:var(--bg); border:1.5px solid var(--line); border-radius:13px;
+  transition:border-color .16s, box-shadow .16s;
+}
+input[type=text]:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 4px rgba(0,113,227,.14)}
+input::placeholder{color:#b0b0b6}
+
+button{
+  font:inherit; font-weight:600; cursor:pointer; border:0; border-radius:99px;
+  padding:15px 28px; background:var(--accent); color:#fff; font-size:16.5px;
+  transition:background .16s, transform .07s, opacity .16s; white-space:nowrap;
+}
+button:hover{background:var(--accent-dark)}
+button:active{transform:scale(.98)}
+button:disabled{opacity:.4; cursor:default; transform:none}
+button.ghost{background:transparent; color:var(--accent); border:1.5px solid var(--line); padding:12px 22px; font-size:15px}
+button.ghost:hover{background:var(--bg-2)}
+.full{width:100%; margin-top:8px}
+
+/* ---------- segmented control ---------- */
+.seg-wrap{margin-top:22px; padding-top:20px; border-top:1px solid var(--line-2)}
+.seg-title{font-size:14.5px; font-weight:600; margin:0 0 4px}
+.seg-sub{font-size:13.5px; color:var(--ink-3); margin:0 0 12px; line-height:1.45}
+.seg{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.seg input{position:absolute; opacity:0; pointer-events:none}
+.seg label{
+  display:block; cursor:pointer; padding:13px 14px; border-radius:13px;
+  border:1.5px solid var(--line); background:var(--bg);
+  transition:border-color .16s, background .16s, box-shadow .16s;
+}
+.seg label:hover{background:var(--bg-2)}
+.seg input:checked + label{border-color:var(--accent); background:rgba(0,113,227,.05); box-shadow:0 0 0 3px rgba(0,113,227,.1)}
+.seg input:disabled + label{cursor:not-allowed; opacity:.5}
+.seg .t{font-size:15px; font-weight:600; display:flex; align-items:center; gap:7px}
+.seg .t .pill{font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+  padding:2px 7px; border-radius:99px; background:var(--bg-2); color:var(--ink-3); border:1px solid var(--line-2)}
+.seg input:checked + label .pill{background:var(--accent); color:#fff; border-color:transparent}
+.seg .d{font-size:13px; color:var(--ink-2); margin-top:5px; line-height:1.45}
+
+/* ---------- progress ---------- */
+#scanning{margin-top:36px}
+.bar{height:7px; border-radius:99px; background:var(--bg-2); overflow:hidden; margin:18px 0 12px}
+.bar>i{display:block; height:100%; width:0; border-radius:99px;
+  background:linear-gradient(90deg,#0071e3,#8e5cf7); transition:width .3s cubic-bezier(.4,0,.2,1)}
+.count{font-size:14px; color:var(--ink-3); font-variant-numeric:tabular-nums; margin:0}
+.note{font-size:14px; color:var(--ink-2); line-height:1.55; margin:0 0 4px}
+.note code{font-size:12.5px; background:var(--bg-2); padding:2px 7px; border-radius:6px; border:1px solid var(--line-2)}
+.pulse{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); margin-right:7px;
+  animation:pulse 1.3s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.25; transform:scale(.85)} 50%{opacity:1; transform:scale(1)}}
+
+/* ---------- verdict ---------- */
+#results{margin-top:36px}
+.verdict{border-radius:var(--r); padding:30px 26px; text-align:center; border:1px solid; margin-bottom:28px}
+.verdict.bad{background:var(--danger-bg); border-color:var(--danger-line)}
+.verdict.good{background:var(--ok-bg); border-color:var(--ok-line)}
+.verdict .big{font-size:clamp(44px,9vw,64px); font-weight:700; letter-spacing:-.035em; line-height:1}
+.verdict.bad .big{color:var(--danger)}
+.verdict.good .big{color:var(--ok)}
+.verdict h2{margin:8px 0 8px; font-size:clamp(20px,3.4vw,25px); font-weight:600; letter-spacing:-.015em; line-height:1.2}
+.verdict p{margin:0; color:var(--ink-2); font-size:15.5px; line-height:1.5}
+
+h3.sec{font-size:12.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--ink-3); margin:34px 0 12px}
+
+/* ---------- finding rows ---------- */
+.row{background:var(--surface); border:1px solid var(--line); border-radius:16px; margin-bottom:11px; overflow:hidden}
+.row .head{display:flex; align-items:center; gap:13px; padding:17px 18px}
+.row .dot{width:10px; height:10px; border-radius:50%; flex:0 0 auto}
+.row.bad .dot{background:var(--danger); box-shadow:0 0 0 4px rgba(215,0,21,.13)}
+.row.ok .dot{background:var(--ok); box-shadow:0 0 0 4px rgba(0,105,62,.12)}
+.row .nm{font-weight:600; font-size:16.5px; word-break:break-word; flex:1; min-width:0}
+.row .ct{font-size:13.5px; color:var(--ink-3); font-variant-numeric:tabular-nums; white-space:nowrap}
+.samples{padding:0 18px 16px; display:grid; gap:9px}
+.sample{display:flex; align-items:center; gap:11px; padding:11px 13px; background:var(--bg-2); border-radius:11px}
+.sample .k{font-size:12.5px; font-weight:600; color:var(--ink-2); min-width:132px; flex:0 0 auto}
+.sample .v{font:500 13.5px/1.4 ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace; color:var(--danger); word-break:break-all}
+.cols{padding:0 18px 16px; font-size:13px; color:var(--ink-3); line-height:1.5}
+details.fix{border-top:1px solid var(--line-2); margin:0}
+details.fix>summary{cursor:pointer; list-style:none; padding:13px 18px; font-size:14.5px; color:var(--accent); font-weight:500}
+details.fix>summary::-webkit-details-marker{display:none}
+details.fix>summary:hover{background:var(--bg-2)}
+.fixbody{padding:0 18px 18px}
+.fix-note{font-size:14px; color:var(--ink-2); margin:0 0 11px; line-height:1.5}
+pre{margin:0; padding:15px 16px; overflow-x:auto; border-radius:12px; background:#1d1d1f; border:0;
+  font:500 12.5px/1.65 ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace; color:#f5f5f7}
+.copy{margin-top:10px; padding:9px 17px; font-size:14px; background:transparent; color:var(--accent); border:1.5px solid var(--line)}
+
+.callout{border-radius:16px; padding:19px 20px; font-size:14.5px; line-height:1.6; border:1px solid}
+.callout.amber{background:var(--amber-bg); border-color:#f0e2c4; color:var(--ink-2)}
+.callout.plain{background:var(--bg-2); border-color:var(--line-2); color:var(--ink-2)}
+.callout strong{color:var(--ink)}
+.err{background:var(--danger-bg); border:1px solid var(--danger-line); color:var(--danger);
+  border-radius:16px; padding:17px 19px; font-size:15px; margin-top:20px; line-height:1.55}
+.privacy{margin:20px auto 0; max-width:48ch; text-align:center; font-size:13.5px; color:var(--ink-3); line-height:1.55}
+.privacy strong{color:var(--ink-2); font-weight:600}
+.loading{text-align:center; color:var(--ink-3); font-size:14.5px; margin-top:44px}
+
+footer{margin-top:60px; padding-top:32px; border-top:1px solid var(--line-2); text-align:center;
+  font-size:13.5px; color:var(--ink-3); line-height:1.75}
+.ghrow{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-bottom:18px}
+
+@media (max-width:560px){
+  .inputrow{flex-direction:column}
+  .seg{grid-template-columns:1fr}
+  .sample{flex-direction:column; align-items:flex-start; gap:4px}
+  .sample .k{min-width:0}
+}
 </style>
 </head>
 <body>
 <div class="wrap">
 
 <header>
-  <h1>Is your database<br>open to the internet?</h1>
-  <p class="sub">Supabase puts your data online behind one key. Find out what a stranger can read.</p>
+  <div class="brand"><span class="mark">u</span> unruly</div>
+  <h1>Is your database<br><span class="grad">open to the internet?</span></h1>
+  <p class="sub">These platforms put your data online behind one key. See what a stranger can read.</p>
+  <div class="chips">
+    <span class="chip"><span class="d"></span>Supabase</span>
+    <span class="chip off"><span class="d"></span>Firebase &middot; CLI</span>
+    <span class="chip off"><span class="d"></span>Neon &middot; CLI</span>
+    <span class="chip off"><span class="d"></span>PocketBase &middot; CLI</span>
+  </div>
 </header>
 
-<p class="loading" id="boot">Loading the scanner…</p>
+<p class="loading" id="boot"><span class="pulse"></span>Loading the scanner…</p>
 
 <form id="form" hidden autocomplete="off">
-  <div class="card">
-    <div class="field">
-      <label for="site">Your app's address</label>
-      <input type="text" id="site" placeholder="https://myapp.vercel.app" spellcheck="false" autocapitalize="off">
-      <p class="hint">Just the website. It finds your database the same way a stranger would,
-      by reading the code your app already sends to every visitor.</p>
+  <div class="card lift">
+    <label class="lbl" for="site">Your app's address</label>
+    <div class="inputrow">
+      <input type="text" id="site" placeholder="https://myapp.lovable.app" spellcheck="false" autocapitalize="off" autocorrect="off">
+      <button type="submit" id="go">Check it</button>
     </div>
+    <p class="hint">It finds your database the way a stranger would, by reading the code your app
+    already sends to every visitor. Nothing to look up, nothing to paste.</p>
 
-    <details class="settings">
-      <summary>How should it name the data it finds?</summary>
-      <label class="opt">
-        <input type="radio" name="cls" value="rules" checked>
-        <span><strong>Built in rules</strong> <em>recommended</em>
-        <small>Recognises card numbers, IBANs, tokens and password hashes by their structure,
-        in any language. Instant, nothing to download, and wrong about 0.4% of the time.</small></span>
-      </label>
-      <label class="opt">
-        <input type="radio" name="cls" value="model" disabled>
-        <span><strong>Download a language model</strong> <em>not yet</em>
-        <small>Would also catch addresses and diagnoses, which have no structure to check.
-        Costs a 350MB download, needs WebGPU, and the browser runtime caps the readout at
-        5 options where this uses 16, which weakens the confidence gate. Not shipped until
-        that is measured rather than assumed.</small></span>
-      </label>
-    </details>
-
-    <button type="submit" id="go">Check my app</button>
+    <div class="seg-wrap">
+      <p class="seg-title">How should it name the data it finds?</p>
+      <p class="seg-sub">Both run on your device.</p>
+      <div class="seg">
+        <input type="radio" name="cls" id="c1" value="rules" checked>
+        <label for="c1">
+          <span class="t">Built-in rules <span class="pill">instant</span></span>
+          <span class="d">Recognises card numbers, IBANs, tokens and password hashes by their
+          structure, in any language. <strong>Limited:</strong> cannot see addresses or
+          diagnoses, which have no structure to check.</span>
+        </label>
+        <input type="radio" name="cls" id="c2" value="model" disabled>
+        <label for="c2">
+          <span class="t">Language model <span class="pill">not yet</span></span>
+          <span class="d">Would also catch addresses and diagnoses. Needs a 350MB download and
+          WebGPU, and the browser runtime returns only 5 options where this uses 16, which
+          weakens the confidence gate. Not shipped until that is measured.</span>
+        </label>
+      </div>
+    </div>
   </div>
 
-  <details class="manual">
-    <summary>My app's host blocks this, let me enter the details myself</summary>
-    <div class="card">
-      <div class="field">
-        <label for="url">Project URL</label>
-        <input type="text" id="url" placeholder="https://abcdefgh.supabase.co" spellcheck="false" autocapitalize="off">
-      </div>
-      <div class="field">
-        <label for="key">Publishable key</label>
-        <input type="text" id="key" placeholder="sb_publishable_… or eyJhbGciOiJIUzI1NiIs…" spellcheck="false" autocapitalize="off">
-        <p class="hint">Supabase: <strong>Project Settings → API</strong>. This key already ships
-        in your website where anyone can read it, which is exactly why it is worth testing.</p>
-      </div>
-      <button type="button" id="goManual">Check with these details</button>
+  <details class="card" style="margin-top:14px; padding:0">
+    <summary style="cursor:pointer; padding:15px 20px; font-size:14.5px; color:var(--ink-3); list-style:none">
+      My host blocks this &middot; enter the details myself
+    </summary>
+    <div style="padding:0 20px 20px">
+      <label class="lbl" for="url">Project URL</label>
+      <input type="text" id="url" placeholder="https://abcdefgh.supabase.co" spellcheck="false" autocapitalize="off" style="width:100%">
+      <label class="lbl" for="key" style="margin-top:16px">Publishable key</label>
+      <input type="text" id="key" placeholder="sb_publishable_… or eyJhbGciOiJIUzI1NiIs…" spellcheck="false" autocapitalize="off" style="width:100%">
+      <p class="hint">Supabase &rarr; Project Settings &rarr; API. This key already ships in your
+      website where anyone can read it.</p>
+      <button type="button" id="goManual" class="full">Check with these details</button>
     </div>
   </details>
 
-  <p class="privacy">
-    <strong>Nothing leaves your browser.</strong> The scanner runs on your device and talks to
-    your app and your database directly. There is no server in this page to send anything to.
-  </p>
+  <p class="privacy"><strong>Nothing leaves your browser.</strong> The scanner runs on your device
+  and talks to your app and your database directly. There is no server in this page to send
+  anything to.</p>
 </form>
 
 <div id="finding" hidden>
-  <div class="card">
-    <p class="count" id="findingMsg">Reading your app…</p>
-  </div>
+  <div class="card"><p class="count"><span class="pulse"></span><span id="findingMsg">Reading your app…</span></p></div>
 </div>
 
 <div id="scanning" hidden>
   <div class="card">
-    <p class="found" id="note" hidden></p>
+    <p class="note" id="note" hidden></p>
     <div class="bar"><i id="fill"></i></div>
     <p class="count" id="count">Starting…</p>
   </div>
 </div>
 
 <div id="err" class="err" hidden></div>
-
 <div id="results" hidden></div>
 
 <footer>
-  <p><a href="https://github.com/eppser/unruly">unruly</a> · open source · MIT<br>
+  <div class="ghrow">
+    <a class="chip" href="https://github.com/eppser/unruly"><span class="d"></span>github.com/eppser/unruly</a>
+  </div>
+  <p>Open source, MIT. Built for apps generated by Lovable, Bolt, v0,<br>
+  Firebase Studio, Cursor and Claude Code.<br>
   <span id="ver"></span></p>
 </footer>
 
@@ -247,23 +278,21 @@ details.manual > summary{text-align:center; color:var(--ink-3)}
 <script>
 const $ = s => document.querySelector(s);
 
-// Plain words for the kinds the classifier returns. The classifier's own
-// vocabulary is written for a report; this page is read by someone who has
-// never heard of PII and should not have to learn.
+// The classifier's vocabulary is written for a report. This page is read by
+// someone who has never heard of PII and should not have to learn.
 const KIND = {
-  credential:"passwords or keys", financial:"card or bank details",
-  contact:"emails or phone numbers", pii:"personal details",
-  location:"addresses", health:"health data",
-  "government-id":"ID numbers", biometric:"biometric data",
-  correspondence:"private messages", device:"device identifiers",
-  behaviour:"browsing history", file:"uploaded files",
-  employment:"employment records", education:"education records",
-  criminal:"criminal records", personal:"personal details",
+  credential:"Passwords or keys", financial:"Card or bank details",
+  contact:"Emails or phone numbers", pii:"Personal details",
+  location:"Addresses", health:"Health data", "government-id":"ID numbers",
+  biometric:"Biometric data", correspondence:"Private messages",
+  device:"Device identifiers", behaviour:"Browsing history",
+  file:"Uploaded files", employment:"Employment records",
+  education:"Education records", criminal:"Criminal records",
+  personal:"Personal details",
 };
-
-function pretty(kinds){ return (kinds||[]).map(k => KIND[k] || k); }
-
-function plural(n, one, many){ return n === 1 ? one : many; }
+const label = k => KIND[k] || k;
+const plural = (n,a,b) => n === 1 ? a : b;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 (async () => {
   const go = new Go();
@@ -274,7 +303,7 @@ function plural(n, one, many){ return n === 1 ? one : many; }
     $("#form").hidden = false;
     if (window.unrulyVersion) $("#ver").textContent = "build " + window.unrulyVersion;
   } catch (e) {
-    $("#boot").textContent = "The scanner could not load. " + e;
+    $("#boot").innerHTML = "The scanner could not load. " + esc(String(e));
   }
 })();
 
@@ -282,11 +311,9 @@ $("#form").addEventListener("submit", e => {
   e.preventDefault();
   const site = $("#site").value.trim();
   $("#err").hidden = true; $("#results").hidden = true;
-
   if (!/^https?:\/\/[^\s/]+\./.test(site)) {
-    return fail("That does not look like a web address. It should start with https:// and look like https://myapp.vercel.app");
+    return fail("That does not look like a web address. It should start with https:// and look like https://myapp.lovable.app");
   }
-
   $("#form").hidden = true;
   $("#finding").hidden = false;
   $("#findingMsg").textContent = "Reading your app, the way a stranger would…";
@@ -294,20 +321,19 @@ $("#form").addEventListener("submit", e => {
   unrulyDiscover(site, d => {
     $("#finding").hidden = true;
     if (d.reason) {
-      // Discovery failing is not the same as the app being safe, and the page
-      // must never let those two look alike.
+      // Failing to find a database is NOT the same as the app being safe, and
+      // the page must never let those two look alike.
       $("#form").hidden = false;
       $("#err").innerHTML = "Could not find a database from that address: " + esc(d.reason) +
-        "<br><br>You can still check it by opening <strong>“let me enter the details myself”</strong> below and pasting them from your Supabase dashboard.";
+        "<br><br>You can still check it by opening <strong>“enter the details myself”</strong> and pasting them from your Supabase dashboard.";
       $("#err").hidden = false;
-      document.querySelector("details.manual").open = true;
+      document.querySelector("details.card").open = true;
       return;
     }
-    $("#findingMsg").innerHTML = "";
-    const named = d.named || 0;
+    const n = d.named || 0;
     startScan(d.base, d.key, d.text,
-      `Found project <code>${esc(d.ref)}</code> in <code>${esc(shortName(d.source))}</code>, which your app sends to every visitor.` +
-      (named ? ` Your code names <strong>${named}</strong> ${named===1?"table or routine":"tables and routines"} outright, so those are checked first.` : ""));
+      `Found project <code>${esc(d.ref)}</code> in <code>${esc(shortName(d.source))}</code>.` +
+      (n ? ` Your code names <strong>${n}</strong> ${plural(n,"table or routine","tables and routines")} outright, so those go first.` : ""));
   });
 });
 
@@ -316,9 +342,9 @@ $("#goManual").addEventListener("click", () => {
   const key = $("#key").value.trim();
   $("#err").hidden = true;
   if (!/^https:\/\/[^\s/]+\./.test(url)) return fail("That does not look like a project URL.");
-  // Both key formats are live: newer Supabase projects issue sb_publishable_,
+  // Both formats are live: newer Supabase projects issue sb_publishable_,
   // older ones a JWT starting eyJ. A real project found during testing used
-  // the new format, and an earlier version of this check rejected it.
+  // the new format and an earlier version of this check rejected it.
   if (!/^(sb_publishable_[\w-]{10,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]+)$/.test(key)) {
     return fail("That does not look like a publishable key. It starts with sb_publishable_ on newer projects, or eyJ on older ones.");
   }
@@ -326,18 +352,17 @@ $("#goManual").addEventListener("click", () => {
   startScan(url, key, "", "");
 });
 
-function shortName(u){ try { return new URL(u).pathname.split("/").pop() || u; } catch { return u; } }
+const shortName = u => { try { return new URL(u).pathname.split("/").pop() || u; } catch { return u; } };
 
 function startScan(base, key, bundleText, note){
   $("#scanning").hidden = false;
   $("#fill").style.width = "0%";
-  $("#note").innerHTML = note;
-  $("#note").hidden = !note;
+  $("#note").innerHTML = note; $("#note").hidden = !note;
   $("#count").textContent = "Starting…";
   unrulyScan(base, key,
     p => {
       $("#fill").style.width = Math.round(p.done / p.total * 100) + "%";
-      $("#count").textContent = `Checked ${p.done} of ${p.total} table names`;
+      $("#count").textContent = `Checked ${p.done} of ${p.total} names`;
     },
     r => {
       $("#scanning").hidden = true;
@@ -347,91 +372,100 @@ function startScan(base, key, bundleText, note){
 }
 
 function fail(msg){
-  $("#scanning").hidden = true;
-  $("#finding").hidden = true;
+  $("#scanning").hidden = true; $("#finding").hidden = true;
   $("#form").hidden = false;
-  $("#err").textContent = msg;
-  $("#err").hidden = false;
+  $("#err").textContent = msg; $("#err").hidden = false;
 }
 
 function render(d){
-  const box = $("#results");
-  const open = d.exposed || [], shut = d.denied || [], blank = d.empty || [];
+  const box = $("#results"), open = d.exposed || [], shut = d.denied || [];
+  const rows = open.reduce((a,t) => a + (t.rows > 0 ? t.rows : 0), 0);
   let h = "";
 
-  if (open.length) {
-    const rows = open.reduce((a, t) => a + (t.rows > 0 ? t.rows : 0), 0);
-    h += `<div class="verdict bad">
-      <h2>${open.length} ${plural(open.length,"table is","tables are")} readable by anyone</h2>
-      <p>No login needed. ${rows ? `That is ${rows.toLocaleString()} ${plural(rows,"row","rows")} a stranger can download right now.` : ""}</p>
-    </div>`;
-  } else {
-    h += `<div class="verdict good">
-      <h2>Nothing readable was found</h2>
-      <p>Of the ${d.probed} common table names checked, none returned data to an anonymous visitor.</p>
-    </div>`;
-  }
+  h += open.length
+    ? `<div class="verdict bad">
+        <div class="big">${open.length}</div>
+        <h2>${plural(open.length,"table is","tables are")} readable by anyone</h2>
+        <p>No login required.${rows ? ` That is ${rows.toLocaleString()} ${plural(rows,"row","rows")} a stranger can download right now.` : ""}</p>
+      </div>`
+    : `<div class="verdict good">
+        <div class="big">0</div>
+        <h2>Nothing readable was found</h2>
+        <p>Of the ${d.probed} names checked, none returned data to an anonymous visitor.</p>
+      </div>`;
 
   if (open.length) {
     h += `<h3 class="sec">Open to anyone</h3>`;
     for (const t of open) {
-      const kinds = pretty(t.kinds);
-      h += `<div class="row bad"><span class="dot"></span><div class="body">
-        <div class="name">${esc(t.relation)}</div>
-        <div class="meta">${t.rows > 0 ? `${t.rows.toLocaleString()} ${plural(t.rows,"row","rows")} readable` : "readable"}</div>
-        ${kinds.length ? `<div class="tags">${kinds.map(k=>`<span class="tag">${esc(k)}</span>`).join("")}</div>` : ""}
-        <details class="more"><summary>How to fix this</summary>
-          <p class="fix-note">Run this in the Supabase SQL editor. The first line closes the table.
-          The second lets each person read only their own rows, which is usually what you meant.</p>
-          <pre>ALTER TABLE ${esc(t.relation)} ENABLE ROW LEVEL SECURITY;
+      const ex = t.examples || {};
+      const kinds = Object.keys(ex).length ? Object.keys(ex) : (t.kinds || []);
+      h += `<div class="row bad">
+        <div class="head">
+          <span class="dot"></span>
+          <span class="nm">${esc(t.relation)}</span>
+          <span class="ct">${t.rows > 0 ? t.rows.toLocaleString() + " " + plural(t.rows,"row","rows") : "readable"}</span>
+        </div>`;
+      if (kinds.length) {
+        h += `<div class="samples">`;
+        for (const k of kinds) {
+          const vals = (ex[k] || []).slice(0,2);
+          h += `<div class="sample"><span class="k">${esc(label(k))}</span>
+            <span class="v">${vals.length ? vals.map(esc).join("&nbsp; &nbsp;") : "found"}</span></div>`;
+        }
+        h += `</div>`;
+      }
+      if (t.columns && t.columns.length) {
+        h += `<div class="cols"><strong>Columns:</strong> ${t.columns.slice(0,14).map(esc).join(", ")}${t.columns.length>14?` and ${t.columns.length-14} more`:""}</div>`;
+      }
+      h += `<details class="fix"><summary>How to fix this</summary><div class="fixbody">
+        <p class="fix-note">Run this in the Supabase SQL editor. The first line closes the table.
+        The second lets each person read only their own rows, which is usually what you meant.</p>
+        <pre>ALTER TABLE ${esc(t.relation)} ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "own rows only" ON ${esc(t.relation)}
   FOR SELECT TO authenticated
   USING (auth.uid() = user_id);</pre>
-          <button class="copy" data-sql="${esc(t.relation)}">Copy</button>
-        </details>
-      </div></div>`;
+        <button class="copy">Copy</button>
+      </div></details></div>`;
     }
+    h += `<div class="callout amber" style="margin-top:6px">The values above are
+      <strong>masked</strong>. At most four characters of anything real are shown, enough to
+      recognise your own data and not enough to be it.</div>`;
   }
 
   if (shut.length) {
-    h += `<h3 class="sec">Protected (${shut.length})</h3>`;
-    h += `<div class="row ok"><span class="dot"></span><div class="body">
-      <div class="name">${shut.slice(0,12).map(t=>esc(t.relation)).join(", ")}${shut.length>12?` and ${shut.length-12} more`:""}</div>
-      <div class="meta">These exist but refused an anonymous reader. This is what the rest should look like.</div>
-    </div></div>`;
+    h += `<h3 class="sec">Protected &middot; ${shut.length}</h3>
+      <div class="row ok"><div class="head"><span class="dot"></span>
+        <span class="nm" style="font-weight:400; font-size:14.5px; color:var(--ink-2)">${shut.slice(0,14).map(t=>esc(t.relation)).join(", ")}${shut.length>14?` and ${shut.length-14} more`:""}</span>
+      </div></div>`;
   }
 
   h += `<h3 class="sec">What this did not check</h3>
-    <div class="row"><span class="dot"></span><div class="body">
-      <div class="meta">
-        This checked <strong>${d.probed} common table names</strong>. A table with an unusual name
-        will not have been asked about, so a clean result here is not proof the project is safe.
-        It also only tested <strong>reading</strong>. Whether a stranger can change or delete your
-        data is a separate question, and the
-        <a href="https://github.com/eppser/unruly">command line version</a> answers it along with
-        storage, realtime and sign-up escalation.
-      </div>
-    </div></div>`;
+    <div class="callout plain">
+      This page only tests <strong>reading</strong>. It does not test whether a stranger can
+      <strong>insert, update or delete</strong> your data, and those are separate questions with
+      separate answers. It also checked ${d.probed} names, so a table with an unusual name may
+      not have been asked about: a clean result here is not proof.
+      <br><br>
+      The full version covers writes, storage, realtime, sign-up escalation and three more
+      backends: <a href="https://github.com/eppser/unruly">github.com/eppser/unruly</a>
+    </div>`;
 
   box.innerHTML = h;
   box.hidden = false;
   box.scrollIntoView({behavior:"smooth", block:"start"});
 
   box.querySelectorAll(".copy").forEach(b => b.addEventListener("click", () => {
-    const pre = b.previousElementSibling;
-    navigator.clipboard.writeText(pre.textContent).then(() => {
+    navigator.clipboard.writeText(b.previousElementSibling.textContent).then(() => {
       b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy", 1600);
     }).catch(() => { b.textContent = "Press ⌘C"; });
   }));
 
   const again = document.createElement("button");
-  again.className = "ghost"; again.textContent = "Check another project";
+  again.className = "ghost full"; again.textContent = "Check another app";
   again.onclick = () => { box.hidden = true; $("#form").hidden = false; window.scrollTo({top:0,behavior:"smooth"}); };
   box.appendChild(again);
 }
-
-function esc(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 </script>
 </body>
 </html>
