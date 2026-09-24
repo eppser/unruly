@@ -176,9 +176,26 @@ type discovered struct {
 // operator can do next rather than about the network.
 func discover(c *http.Client, page string) (discovered, string) {
 	body, err := get(c, page)
+	blocked := err != nil
+	if blocked {
+		// Some hosts send CORS on every path EXCEPT the rendered page.
+		// Measured on a Cloudflare + Next.js site from a github.io origin:
+		// the page carries no access-control-allow-origin, while robots.txt,
+		// a 404 and every static chunk carry "*". A framework's 404 is still
+		// one of its pages and loads the same script tags, so a readable 404
+		// names the bundles the unreadable page would have named.
+		probe := browserscan.ProbePath(page)
+		// getAny, not get: this probe EXISTS to return 404, and get rejects
+		// anything over 400. The first version of this fallback threw away the
+		// exact body it went looking for.
+		if b, e := getAny(c, probe); e == nil && browserscan.SameOrigin(page, probe) {
+			body, err, blocked = b, nil, false
+		}
+	}
 	if err != nil {
-		return discovered{}, "could not read " + page + ". The site may block other " +
-			"websites from reading it, which is a reasonable thing for it to do."
+		return discovered{}, "could not read " + page + ", and its 404 page was not " +
+			"readable either. The site blocks other websites from reading it, which is " +
+			"a reasonable thing for it to do."
 	}
 	sources := []string{page}
 	texts := []string{body}
@@ -227,8 +244,32 @@ func discover(c *http.Client, page string) (discovered, string) {
 		return discovered{}, "read the page but found no JavaScript to search. " +
 			"If this is a single page app the scripts may load later."
 	}
+	// "could not read it" and "read it and there is nothing there" are
+	// different facts about someone's site, and the second is the more
+	// reassuring one. Saying the first when the second is true is the kind of
+	// error this scanner exists to refuse.
 	return discovered{}, "read the page and " + fmt.Sprint(len(texts)-1) +
-		" of its scripts, but found no Supabase project in them."
+		" of its scripts, and found no Supabase project in any of them. That is a " +
+		"result, not a failure: this page only checks Supabase, so a site built on " +
+		"something else will land here."
+}
+
+// getAny reads a body whatever the status says.
+//
+// A 404 from a single page app is still that app's shell, with the same script
+// tags in it, and that is the only reason the CORS fallback works at all.
+func getAny(c *http.Client, u string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 6<<20))
+	return string(b), err
 }
 
 func get(c *http.Client, u string) (string, error) {

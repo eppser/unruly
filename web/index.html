@@ -400,7 +400,11 @@ $("#form").addEventListener("submit", e => {
       // Failing to find a database is NOT the same as the app being safe, and
       // the page must never let those two look alike.
       $("#form").hidden = false;
-      $("#err").innerHTML = "Could not find a database from that address: " + esc(d.reason) +
+      // No prefix. The reason already says whether this was "we could not
+      // look" or "we looked and there is nothing here", and bolting "could
+      // not find a database" onto the second makes a clean result read as a
+      // failure.
+      $("#err").innerHTML = esc(d.reason) +
         "<br><br>You can still check it by opening <strong>“enter the details myself”</strong> and pasting them from your Supabase dashboard.";
       $("#err").hidden = false;
       document.querySelector("details.card").open = true;
